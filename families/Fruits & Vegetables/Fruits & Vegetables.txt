@@ -1,0 +1,267 @@
+#TARGET VIP+FREE
+
+#FAMILY "Fruits & Vegetables"
+#DESCRIPTION Words for everyday shopping, cooking and healthy eating.
+
+#WORD apple
+#TRANSLATION яблоко
+#EXAMPLE I eat an apple every morning.
+#EXAMPLE_TRANSLATION Я ем яблоко каждое утро.
+#HINT Round fruit, keeps the doctor away.
+
+#WORD banana
+#TRANSLATION банан
+#EXAMPLE Can I have a banana for breakfast?
+#EXAMPLE_TRANSLATION Можно мне банан на завтрак?
+#HINT Yellow and easy to peel.
+
+#WORD carrot
+#TRANSLATION морковь
+#EXAMPLE She adds carrots to soups.
+#EXAMPLE_TRANSLATION Она добавляет морковь в супы.
+#HINT Rabbits love it.
+
+#WORD tomato
+#TRANSLATION помидор
+#EXAMPLE We need tomatoes for the salad.
+#EXAMPLE_TRANSLATION Нам нужны помидоры для салата.
+#HINT Actually a fruit.
+
+#WORD cucumber
+#TRANSLATION огурец
+#EXAMPLE Slice the cucumber, please.
+#EXAMPLE_TRANSLATION Пожалуйста, нарежь огурец.
+#HINT Green and refreshing.
+
+#WORD potato
+#TRANSLATION картофель
+#EXAMPLE Potatoes are used in many dishes.
+#EXAMPLE_TRANSLATION Картофель используется во многих блюдах.
+#HINT You can boil, fry or bake it.
+
+#WORD onion
+#TRANSLATION лук
+#EXAMPLE Cut the onion carefully.
+#EXAMPLE_TRANSLATION Аккуратно порежь лук.
+#HINT Makes people cry.
+
+#WORD lemon
+#TRANSLATION лимон
+#EXAMPLE Add lemon to your tea.
+#EXAMPLE_TRANSLATION Добавь лимон в чай.
+#HINT Sour and yellow.
+
+#WORD grape
+#TRANSLATION виноград
+#EXAMPLE Do you want some grapes?
+#EXAMPLE_TRANSLATION Хочешь немного винограда?
+#HINT Often eaten in bunches.
+
+#WORD pepper
+#TRANSLATION перец
+#EXAMPLE I like spicy peppers.
+#EXAMPLE_TRANSLATION Мне нравятся острые перцы.
+#HINT Comes in many colors.
+
+#STAGE2
+#TASK
+#SENTENCE We need fresh ___ for dinner.
+#ANSWER tomatoes
+#CHOICES tomatoes; shoes; buses; grapes
+#EXPLANATION Only tomatoes are food.
+
+#TASK
+#SENTENCE She always eats a ___ before training.
+#ANSWER banana
+#CHOICES banana; taxi; carrot; metro
+#EXPLANATION Best snack is banana.
+
+#TASK
+#SENTENCE Please peel the ___ for the soup.
+#ANSWER potato
+#CHOICES potato; train; sweater; lemon
+#EXPLANATION Only potato needs peeling.
+
+#TASK
+#SENTENCE He cried while cutting the ___.
+#ANSWER onion
+#CHOICES onion; bus; grape; dress
+#EXPLANATION Onion makes you cry.
+
+#TASK
+#SENTENCE Add some ___ to make the tea sour.
+#ANSWER lemon
+#CHOICES lemon; jacket; metro; carrot
+#EXPLANATION Lemon is sour.
+
+#TASK
+#SENTENCE Rabbits like to eat ___.
+#ANSWER carrot
+#CHOICES carrot; tomato; bus; shoes
+#EXPLANATION Only carrot matches.
+
+#TASK
+#SENTENCE My favourite fruit is ___.
+#ANSWER apple
+#CHOICES apple; pepper; taxi; trousers
+#EXPLANATION Apple is a fruit.
+
+#TASK
+#SENTENCE This ___ is very spicy.
+#ANSWER pepper
+#CHOICES pepper; cucumber; tram; banana
+#EXPLANATION Pepper can be spicy.
+
+#TASK
+#SENTENCE Slice the ___ for the sandwich.
+#ANSWER cucumber
+#CHOICES cucumber; metro; carrot; train
+#EXPLANATION Only cucumber fits.
+
+#TASK
+#SENTENCE I bought a bunch of ___ today.
+#ANSWER grapes
+#CHOICES grapes; potatoes; jackets; bus
+#EXPLANATION Grapes come in bunches.
+
+#STAGE3
+#WORD apple
+#DEFINITION A round fruit, often red or green.
+#EXPLANATION Correct description.
+#CHOICES apple; taxi; onion; train
+
+#WORD carrot
+#DEFINITION A long orange vegetable.
+#EXPLANATION Rabbits like it.
+#CHOICES carrot; tram; pepper; jacket
+
+#WORD onion
+#DEFINITION Vegetable that makes you cry when cut.
+#EXPLANATION Only onion does this.
+#CHOICES onion; grape; bus; trousers
+
+#WORD lemon
+#DEFINITION A sour fruit used in tea.
+#EXPLANATION Lemon fits this.
+#CHOICES lemon; carrot; metro; sweater
+
+#WORD pepper
+#DEFINITION Can be sweet or spicy and has many colors.
+#EXPLANATION Only pepper matches.
+#CHOICES pepper; apple; train; dress
+
+#WORD tomato
+#DEFINITION Red fruit often used in salads.
+#EXPLANATION Tomato is the answer.
+#CHOICES tomato; carrot; taxi; onion
+
+#WORD potato
+#DEFINITION A vegetable you can boil, fry or bake.
+#EXPLANATION Potato matches.
+#CHOICES potato; tram; apple; lemon
+
+#WORD cucumber
+#DEFINITION Green, long and refreshing.
+#EXPLANATION Cucumber fits.
+#CHOICES cucumber; jacket; pepper; metro
+
+#WORD banana
+#DEFINITION Yellow fruit often eaten as a snack.
+#EXPLANATION Banana matches.
+#CHOICES banana; bus; onion; potato
+
+#WORD grape
+#DEFINITION Small and round, eaten in bunches.
+#EXPLANATION Grapes grow in bunches.
+#CHOICES grape; bus; lemon; taxi
+
+#STAGE4  (10 заданий — новые)
+#TASK
+#SENTENCE I like hot and spicy ___.
+#ANSWER peppers
+#CHOICES peppers; apples; shoes; train
+#EXPLANATION Only peppers are spicy.
+
+#TASK
+#SENTENCE Please wash the ___ before eating.
+#ANSWER grapes
+#CHOICES grapes; taxi; sweater; onion
+#EXPLANATION Only grapes are eaten raw.
+
+#TASK
+#SENTENCE I squeeze ___ juice on the fish.
+#ANSWER lemon
+#CHOICES lemon; train; carrot; metro
+#EXPLANATION Lemon fits.
+
+#TASK
+#SENTENCE He added chopped ___ to the dish.
+#ANSWER onion
+#CHOICES onion; jacket; metro; dress
+#EXPLANATION Onion is food.
+
+#TASK
+#SENTENCE My mother grows ___ in the garden.
+#ANSWER tomatoes
+#CHOICES tomatoes; trousers; bus; apple
+#EXPLANATION Tomatoes grow in gardens.
+
+#TASK
+#SENTENCE Let’s make mashed ___ tonight.
+#ANSWER potatoes
+#CHOICES potatoes; metro; shirt; cucumber
+#EXPLANATION Potatoes are used for mash.
+
+#TASK
+#SENTENCE Put some ___ in the salad to make it fresh.
+#ANSWER cucumber
+#CHOICES cucumber; tram; onion; lemon
+#EXPLANATION Cucumber gives freshness.
+
+#TASK
+#SENTENCE She bought organic ___ today.
+#ANSWER apples
+#CHOICES apples; jackets; buses; train
+#EXPLANATION Only apples are food.
+
+#TASK
+#SENTENCE We must fry some ___ for dinner.
+#ANSWER carrots
+#CHOICES carrots; lemon; taxi; tram
+#EXPLANATION Carrots can be fried.
+
+#TASK
+#SENTENCE A ___ is perfect before a workout.
+#ANSWER banana
+#CHOICES banana; jacket; pepper; metro
+#EXPLANATION Banana is a snack.
+
+#STAGE8
+#TEXT
+This morning I went to the market.  
+First, I bought fresh (___) and (___) for the salad.  
+Then I found sweet (___) and a yellow (___) for tea.  
+I also bought (___), (___) and a few (___) for soup.  
+Finally, I took a (___) as a snack and a bunch of (___) for dessert.
+
+#ANSWER1 tomatoes
+#ANSWER2 cucumbers
+#ANSWER3 apples
+#ANSWER4 lemon
+#ANSWER5 carrots
+#ANSWER6 onions
+#ANSWER7 potatoes
+#ANSWER8 banana
+#ANSWER9 grapes
+#ANSWER10 pepper
+
+#EXPLANATION1 Salad ingredient.
+#EXPLANATION2 Salad ingredient.
+#EXPLANATION3 Fruit.
+#EXPLANATION4 For tea.
+#EXPLANATION5 Soup ingredient.
+#EXPLANATION6 Soup ingredient.
+#EXPLANATION7 Soup ingredient.
+#EXPLANATION8 Snack.
+#EXPLANATION9 Dessert fruit.
+#EXPLANATION10 Can be sweet/spicy in dishes.

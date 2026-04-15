@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: -spielen
+#FAMILY "Семья -spielen"
+#DESCRIPTION Слова с корнем -spielen (играть)
+
+#WORD spielen
+#TRANSLATION играть
+#EXAMPLE Die Kinder spielen im Garten.
+
+#WORD Spieler
+#TRANSLATION игрок
+#EXAMPLE Der Spieler schießt ein Tor.
+
+#WORD Spiel
+#TRANSLATION игра
+#EXAMPLE Das Spiel beginnt um 18 Uhr.
+
+#WORD Mitspieler
+#TRANSLATION соигрок
+#EXAMPLE Ich suche einen Mitspieler.
+
+#WORD abspielen
+#TRANSLATION воспроизводить (музыку, видео)
+#EXAMPLE Ich spiele das Lied ab.
+
+#WORD ausspielen
+#TRANSLATION разыгрывать (карту, роль)
+#EXAMPLE Er spielt die Karte aus.
+
+#WORD durchspielen
+#TRANSLATION проходить (игру)
+#EXAMPLE Ich habe das Spiel durchgespielt.
+
+#WORD vorspielen
+#TRANSLATION играть на публике, проигрывать (музыку)
+#EXAMPLE Sie spielt das Stück vor.
+
+#WORD nachspielen
+#TRANSLATION подражать, воспроизводить
+#EXAMPLE Die Kinder spielen die Szene nach.
+
+#WORD verspielen
+#TRANSLATION проигрывать (деньги, шанс)
+#EXAMPLE Er hat sein Geld verspielt.
+
+#STAGE2
+#TASK
+#SENTENCE Die Kinder ___ im Garten.
+#ANSWER spielen
+#CHOICES spielen;nachspielen;abspielen;ausspielen
+#EXPLANATION Дети играют
+#TASK
+#SENTENCE Ich suche einen ___.
+#ANSWER Mitspieler
+#CHOICES Mitspieler;Spieler;Spiel;vorspielen
+#EXPLANATION Ищу соигрока
+#TASK
+#SENTENCE Er ___ die Karte aus.
+#ANSWER spielt
+#CHOICES spielt;spielt nach;spielt ab;spielt vor
+#EXPLANATION Он разыгрывает карту
+
+#STAGE3
+#WORD spielen
+#DEFINITION Sich mit etwas beschäftigen, oft zur Unterhaltung.
+#EXPLANATION Это играть
+#CHOICES spielen;abspielen;ausspielen;nachspielen
+#WORD Spiel
+#DEFINITION Eine organisierte Aktivität mit Regeln.
+#EXPLANATION Это игра
+#CHOICES Spiel;Mitspieler;Spieler;vorspielen
+#WORD verspielen
+#DEFINITION Etwas durch Spielen verlieren.
+#EXPLANATION Это проигрывать
+#CHOICES verspielen;durchspielen;abspielen;ausspielen
+
+#STAGE6
+#WORD spielen
+#SYNONYMS zocken
+#WRONG_SYNONYMS arbeiten, lernen
+#EXPLANATION Синоним играть
+#WORD Mitspieler
+#SYNONYMS Teamkollege
+#WRONG_SYNONYMS Gegner, Spieler
+#EXPLANATION Синоним соигрока
+#WORD vorspielen
+#SYNONYMS aufführen
+#WRONG_SYNONYMS abspielen, nachspielen
+#EXPLANATION Синоним играть на публике
+
+#STAGE8
+#TEXT Die (___) beginnen, der (___) sucht einen (___).
+#ANSWER1 Spiele
+#EXPLANATION1 Игры начинаются
+#ANSWER2 Spieler
+#EXPLANATION2 Игрок участвует
+#ANSWER3 Mitspieler
+#EXPLANATION3 Соигрок нужен для команды 

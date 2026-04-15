@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: Профессии
+#FAMILY "Профессии"
+#DESCRIPTION Профессии на немецком языке
+
+#WORD Arzt
+#TRANSLATION Врач
+#EXAMPLE Der Arzt hilft den Patienten.
+
+#WORD Lehrer
+#TRANSLATION Учитель
+#EXAMPLE Der Lehrer erklärt die Aufgabe.
+
+#WORD Ingenieur
+#TRANSLATION Инженер
+#EXAMPLE Der Ingenieur baut Brücken.
+
+#WORD Koch
+#TRANSLATION Повар
+#EXAMPLE Der Koch bereitet das Essen zu.
+
+#WORD Fahrer
+#TRANSLATION Водитель
+#EXAMPLE Der Fahrer fährt den Bus.
+
+#WORD Verkäufer
+#TRANSLATION Продавец
+#EXAMPLE Der Verkäufer arbeitet im Laden.
+
+#WORD Polizist
+#TRANSLATION Полицейский
+#EXAMPLE Der Polizist kontrolliert den Verkehr.
+
+#WORD Programmierer
+#TRANSLATION Программист
+#EXAMPLE Der Programmierer schreibt Code.
+
+#WORD Künstler
+#TRANSLATION Художник
+#EXAMPLE Der Künstler malt ein Bild.
+
+#WORD Musiker
+#TRANSLATION Музыкант
+#EXAMPLE Der Musiker spielt Gitarre.
+
+#STAGE2
+#TASK
+#SENTENCE Der ___ hilft den Patienten.
+#ANSWER Arzt
+#CHOICES Arzt;Lehrer;Koch;Fahrer
+#EXPLANATION Врач помогает пациентам
+#TASK
+#SENTENCE Der ___ fährt den Bus.
+#ANSWER Fahrer
+#CHOICES Fahrer;Polizist;Verkäufer;Ingenieur
+#EXPLANATION Водитель ведёт автобус
+#TASK
+#SENTENCE Der ___ schreibt Code.
+#ANSWER Programmierer
+#CHOICES Programmierer;Künstler;Musiker;Lehrer
+#EXPLANATION Программист пишет код
+
+#STAGE3
+#WORD Arzt
+#DEFINITION Eine Person, die im Krankenhaus arbeitet und Kranke behandelt.
+#EXPLANATION Это врач
+#CHOICES Arzt;Lehrer;Koch;Fahrer
+#WORD Lehrer
+#DEFINITION Unterichtet Schüler in der Schule.
+#EXPLANATION Это учитель
+#CHOICES Lehrer;Polizist;Verkäufer;Musiker
+#WORD Künstler
+#DEFINITION Malt Bilder oder macht Skulpturen.
+#EXPLANATION Это художник
+#CHOICES Künstler;Musiker;Ingenieur;Koch
+
+#STAGE6
+#WORD Arzt
+#SYNONYMS Mediziner
+#WRONG_SYNONYMS Lehrer, Koch
+#EXPLANATION Синоним врача
+#WORD Lehrer
+#SYNONYMS Pädagoge
+#WRONG_SYNONYMS Fahrer, Musiker
+#EXPLANATION Синоним учителя
+#WORD Musiker
+#SYNONYMS Komponist
+#WRONG_SYNONYMS Künstler, Verkäufer
+#EXPLANATION Синоним музыканта
+
+#STAGE8
+#TEXT In der Stadt arbeiten (___), (___) und (___).
+#ANSWER1 Arzt
+#EXPLANATION1 Врач — лечит людей
+#ANSWER2 Lehrer
+#EXPLANATION2 Учитель — учит детей
+#ANSWER3 Verkäufer
+#EXPLANATION3 Продавец — работает в магазине 

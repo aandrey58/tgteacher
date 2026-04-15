@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: -fahren
+#FAMILY "Семья -fahren"
+#DESCRIPTION Слова с корнем -fahren (ездить, вести)
+
+#WORD fahren
+#TRANSLATION ехать
+#EXAMPLE Ich fahre nach Berlin.
+
+#WORD Fahrer
+#TRANSLATION водитель
+#EXAMPLE Der Fahrer ist müde.
+
+#WORD Abfahrt
+#TRANSLATION отправление
+#EXAMPLE Die Abfahrt ist um 8 Uhr.
+
+#WORD Fahrt
+#TRANSLATION поездка
+#EXAMPLE Die Fahrt dauert zwei Stunden.
+
+#WORD erfahren
+#TRANSLATION узнавать, испытывать
+#EXAMPLE Ich habe viel erfahren.
+
+#WORD umfahren
+#TRANSLATION объезжать
+#EXAMPLE Wir müssen die Baustelle umfahren.
+
+#WORD ausfahren
+#TRANSLATION выезжать
+#EXAMPLE Das Auto fährt aus der Garage aus.
+
+#WORD einfahren
+#TRANSLATION въезжать
+#EXAMPLE Der Zug fährt in den Bahnhof ein.
+
+#WORD überfahren
+#TRANSLATION переезжать (через что-то), сбивать
+#EXAMPLE Er hat die rote Ampel überfahren.
+
+#WORD Mitfahrer
+#TRANSLATION попутчик
+#EXAMPLE Ich suche einen Mitfahrer.
+
+#STAGE2
+#TASK
+#SENTENCE Die ___ ist um 8 Uhr.
+#ANSWER Abfahrt
+#CHOICES Abfahrt;Fahrt;Fahrer;Mitfahrer
+#EXPLANATION Отправление в 8
+#TASK
+#SENTENCE Ich suche einen ___.
+#ANSWER Mitfahrer
+#CHOICES Mitfahrer;Fahrer;Fahrt;umfahren
+#EXPLANATION Ищу попутчика
+#TASK
+#SENTENCE Das Auto fährt aus der Garage ___.
+#ANSWER aus
+#CHOICES aus;ein;um;über
+#EXPLANATION Выезжает из гаража
+
+#STAGE3
+#WORD Fahrer
+#DEFINITION Eine Person, die ein Fahrzeug lenkt.
+#EXPLANATION Это водитель
+#CHOICES Fahrer;Mitfahrer;Fahrt;Abfahrt
+#WORD Fahrt
+#DEFINITION Eine Reise mit einem Fahrzeug.
+#EXPLANATION Это поездка
+#CHOICES Fahrt;Abfahrt;Fahrer;umfahren
+#WORD erfahren
+#DEFINITION Etwas durch Erfahrung lernen.
+#EXPLANATION Это узнавать/испытывать
+#CHOICES erfahren;fahren;überfahren;ausfahren
+
+#STAGE6
+#WORD Fahrer
+#SYNONYMS Autofahrer
+#WRONG_SYNONYMS Mitfahrer, Fahrt
+#EXPLANATION Синоним водителя
+#WORD Fahrt
+#SYNONYMS Reise
+#WRONG_SYNONYMS Abfahrt, Fahrer
+#EXPLANATION Синоним поездки
+#WORD Abfahrt
+#SYNONYMS Abreise
+#WRONG_SYNONYMS Fahrt, Fahrer
+#EXPLANATION Синоним отправления
+
+#STAGE8
+#TEXT Die (___) ist um 8 Uhr, dann beginnt die (___) mit dem (___).
+#ANSWER1 Abfahrt
+#EXPLANATION1 Сначала отправление
+#ANSWER2 Fahrt
+#EXPLANATION2 Потом поездка
+#ANSWER3 Fahrer
+#EXPLANATION3 Водитель ведёт машину 

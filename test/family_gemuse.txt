@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: Овощи
+#FAMILY "Овощи"
+#DESCRIPTION Овощи и их употребление в немецком языке
+
+#WORD Kartoffel
+#TRANSLATION Картофель
+#EXAMPLE Ich esse gern Kartoffeln.
+
+#WORD Tomate
+#TRANSLATION Помидор
+#EXAMPLE Die Tomate ist rot.
+
+#WORD Gurke
+#TRANSLATION Огурец
+#EXAMPLE Die Gurke ist grün.
+
+#WORD Zwiebel
+#TRANSLATION Лук
+#EXAMPLE Ich schneide eine Zwiebel.
+
+#WORD Karotte
+#TRANSLATION Морковь
+#EXAMPLE Kaninchen mögen Karotten.
+
+#WORD Paprika
+#TRANSLATION Перец
+#EXAMPLE Paprika kann rot, gelb oder grün sein.
+
+#WORD Kohl
+#TRANSLATION Капуста
+#EXAMPLE Sauerkraut wird aus Kohl gemacht.
+
+#WORD Spinat
+#TRANSLATION Шпинат
+#EXAMPLE Spinat ist sehr gesund.
+
+#WORD Erbse
+#TRANSLATION Горошек
+#EXAMPLE Erbsen sind klein und grün.
+
+#WORD Bohne
+#TRANSLATION Фасоль
+#EXAMPLE Bohnen enthalten viel Eiweiß.
+
+#STAGE2
+#TASK
+#SENTENCE Die ___ ist grün.
+#ANSWER Gurke
+#CHOICES Gurke;Tomate;Kartoffel;Zwiebel
+#EXPLANATION Только огурец зелёный
+#TASK
+#SENTENCE Ich schneide eine ___.
+#ANSWER Zwiebel
+#CHOICES Zwiebel;Karotte;Paprika;Kohl
+#EXPLANATION Лук режут чаще всего
+#TASK
+#SENTENCE Kaninchen mögen ___.
+#ANSWER Karotte
+#CHOICES Karotte;Spinat;Erbse;Bohne
+#EXPLANATION Кролики любят морковь
+
+#STAGE3
+#WORD Kartoffel
+#DEFINITION Eine runde, braune Knolle, die oft gekocht wird.
+#EXPLANATION Это картофель
+#CHOICES Kartoffel;Tomate;Gurke;Karotte
+#WORD Tomate
+#DEFINITION Eine rote, runde Frucht, die oft im Salat ist.
+#EXPLANATION Это помидор
+#CHOICES Tomate;Gurke;Kohl;Spinat
+#WORD Paprika
+#DEFINITION Ein Gemüse, das rot, gelb oder grün sein kann.
+#EXPLANATION Это перец
+#CHOICES Paprika;Zwiebel;Bohne;Erbse
+
+#STAGE6
+#WORD Kartoffel
+#SYNONYMS Erdapfel, Grundbirne
+#WRONG_SYNONYMS Tomate, Apfel
+#EXPLANATION Синонимы картофеля
+#WORD Tomate
+#SYNONYMS Paradeiser
+#WRONG_SYNONYMS Gurke, Karotte
+#EXPLANATION Австрийский синоним помидора
+#WORD Zwiebel
+#SYNONYMS Küchenzwiebel
+#WRONG_SYNONYMS Knoblauch, Karotte
+#EXPLANATION Синоним лука
+
+#STAGE8
+#TEXT Ich mache einen Salat mit (___), (___) und (___).
+#ANSWER1 Tomate
+#EXPLANATION1 Помидор — классика для салата
+#ANSWER2 Gurke
+#EXPLANATION2 Огурец — тоже часто в салате
+#ANSWER3 Zwiebel
+#EXPLANATION3 Лук — для вкуса 

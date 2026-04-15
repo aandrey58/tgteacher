@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: Транспорт
+#FAMILY "Транспорт"
+#DESCRIPTION Транспорт на немецком языке
+
+#WORD Auto
+#TRANSLATION Машина
+#EXAMPLE Ich fahre mit dem Auto.
+
+#WORD Fahrrad
+#TRANSLATION Велосипед
+#EXAMPLE Das Fahrrad ist schnell.
+
+#WORD Bus
+#TRANSLATION Автобус
+#EXAMPLE Der Bus kommt pünktlich.
+
+#WORD Zug
+#TRANSLATION Поезд
+#EXAMPLE Der Zug fährt ab.
+
+#WORD Flugzeug
+#TRANSLATION Самолёт
+#EXAMPLE Das Flugzeug fliegt hoch.
+
+#WORD Schiff
+#TRANSLATION Корабль
+#EXAMPLE Das Schiff fährt auf dem Meer.
+
+#WORD Motorrad
+#TRANSLATION Мотоцикл
+#EXAMPLE Das Motorrad ist laut.
+
+#WORD Straßenbahn
+#TRANSLATION Трамвай
+#EXAMPLE Die Straßenbahn hält an der Haltestelle.
+
+#WORD Taxi
+#TRANSLATION Такси
+#EXAMPLE Ich nehme ein Taxi.
+
+#WORD Lastwagen
+#TRANSLATION Грузовик
+#EXAMPLE Der Lastwagen transportiert Waren.
+
+#STAGE2
+#TASK
+#SENTENCE Ich fahre mit dem ___.
+#ANSWER Auto
+#CHOICES Auto;Bus;Zug;Fahrrad
+#EXPLANATION Я еду на машине
+#TASK
+#SENTENCE Das ___ ist schnell.
+#ANSWER Fahrrad
+#CHOICES Fahrrad;Motorrad;Bus;Schiff
+#EXPLANATION Велосипед быстрый
+#TASK
+#SENTENCE Das ___ fliegt hoch.
+#ANSWER Flugzeug
+#CHOICES Flugzeug;Zug;Auto;Taxi
+#EXPLANATION Самолёт летает
+
+#STAGE3
+#WORD Auto
+#DEFINITION Ein Fahrzeug mit vier Rädern, fährt auf der Straße.
+#EXPLANATION Это машина
+#CHOICES Auto;Bus;Fahrrad;Motorrad
+#WORD Zug
+#DEFINITION Fährt auf Schienen, transportiert viele Menschen.
+#EXPLANATION Это поезд
+#CHOICES Zug;Bus;Straßenbahn;Schiff
+#WORD Schiff
+#DEFINITION Fährt auf dem Wasser, oft sehr groß.
+#EXPLANATION Это корабль
+#CHOICES Schiff;Flugzeug;Auto;Taxi
+
+#STAGE6
+#WORD Auto
+#SYNONYMS PKW
+#WRONG_SYNONYMS Bus, Fahrrad
+#EXPLANATION Синоним машины
+#WORD Bus
+#SYNONYMS Omnibus
+#WRONG_SYNONYMS Zug, Taxi
+#EXPLANATION Синоним автобуса
+#WORD Zug
+#SYNONYMS Eisenbahn
+#WRONG_SYNONYMS Straßenbahn, Schiff
+#EXPLANATION Синоним поезда
+
+#STAGE8
+#TEXT Ich reise mit (___), (___) und (___).
+#ANSWER1 Auto
+#EXPLANATION1 Машина — удобно
+#ANSWER2 Zug
+#EXPLANATION2 Поезд — быстро
+#ANSWER3 Flugzeug
+#EXPLANATION3 Самолёт — для дальних поездок 

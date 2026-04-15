@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: Фрукты
+#FAMILY "Фрукты"
+#DESCRIPTION Фрукты на немецком языке
+
+#WORD Apfel
+#TRANSLATION Яблоко
+#EXAMPLE Ich esse einen Apfel.
+
+#WORD Birne
+#TRANSLATION Груша
+#EXAMPLE Die Birne ist süß.
+
+#WORD Banane
+#TRANSLATION Банан
+#EXAMPLE Die Banane ist gelb.
+
+#WORD Orange
+#TRANSLATION Апельсин
+#EXAMPLE Ich trinke Orangensaft.
+
+#WORD Traube
+#TRANSLATION Виноград
+#EXAMPLE Trauben wachsen an Reben.
+
+#WORD Pfirsich
+#TRANSLATION Персик
+#EXAMPLE Der Pfirsich ist saftig.
+
+#WORD Kirsche
+#TRANSLATION Вишня
+#EXAMPLE Die Kirschen sind reif.
+
+#WORD Erdbeere
+#TRANSLATION Клубника
+#EXAMPLE Erdbeeren schmecken lecker.
+
+#WORD Zitrone
+#TRANSLATION Лимон
+#EXAMPLE Die Zitrone ist sauer.
+
+#WORD Ananas
+#TRANSLATION Ананас
+#EXAMPLE Ich kaufe eine Ananas.
+
+#STAGE2
+#TASK
+#SENTENCE Die ___ ist gelb.
+#ANSWER Banane
+#CHOICES Banane;Apfel;Birne;Kirsche
+#EXPLANATION Только банан жёлтый
+#TASK
+#SENTENCE Ich trinke ___saft.
+#ANSWER Orange
+#CHOICES Orange;Apfel;Traube;Zitrone
+#EXPLANATION Апельсиновый сок
+#TASK
+#SENTENCE Die ___ ist sauer.
+#ANSWER Zitrone
+#CHOICES Zitrone;Erdbeere;Pfirsich;Birne
+#EXPLANATION Лимон кислый
+
+#STAGE3
+#WORD Apfel
+#DEFINITION Eine runde Frucht, oft rot oder grün, wächst auf Bäumen.
+#EXPLANATION Это яблоко
+#CHOICES Apfel;Birne;Banane;Kirsche
+#WORD Traube
+#DEFINITION Kleine, runde Früchte, wachsen in einer Traube.
+#EXPLANATION Это виноград
+#CHOICES Traube;Apfel;Erdbeere;Pfirsich
+#WORD Erdbeere
+#DEFINITION Kleine, rote Frucht mit vielen kleinen Kernen außen.
+#EXPLANATION Это клубника
+#CHOICES Erdbeere;Kirsche;Banane;Zitrone
+
+#STAGE6
+#WORD Apfel
+#SYNONYMS Tafelapfel
+#WRONG_SYNONYMS Birne, Banane
+#EXPLANATION Сорт яблока
+#WORD Orange
+#SYNONYMS Apfelsine
+#WRONG_SYNONYMS Zitrone, Traube
+#EXPLANATION Второе название апельсина
+#WORD Kirsche
+#SYNONYMS Sauerkirsche
+#WRONG_SYNONYMS Erdbeere, Apfel
+#EXPLANATION Вид вишни
+
+#STAGE8
+#TEXT Ich mache einen Obstsalat mit (___), (___) und (___).
+#ANSWER1 Apfel
+#EXPLANATION1 Яблоко — классика для салата
+#ANSWER2 Banane
+#EXPLANATION2 Банан — сладкий фрукт
+#ANSWER3 Erdbeere
+#EXPLANATION3 Клубника — для вкуса 

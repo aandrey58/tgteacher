@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: Одежда
+#FAMILY "Одежда"
+#DESCRIPTION Одежда на немецком языке
+
+#WORD Hemd
+#TRANSLATION Рубашка
+#EXAMPLE Ich trage ein Hemd.
+
+#WORD Hose
+#TRANSLATION Штаны
+#EXAMPLE Die Hose ist blau.
+
+#WORD Kleid
+#TRANSLATION Платье
+#EXAMPLE Das Kleid ist elegant.
+
+#WORD Jacke
+#TRANSLATION Куртка
+#EXAMPLE Die Jacke hält warm.
+
+#WORD Mantel
+#TRANSLATION Пальто
+#EXAMPLE Im Winter trage ich einen Mantel.
+
+#WORD Rock
+#TRANSLATION Юбка
+#EXAMPLE Der Rock ist kurz.
+
+#WORD T-Shirt
+#TRANSLATION Футболка
+#EXAMPLE Das T-Shirt ist weiß.
+
+#WORD Pullover
+#TRANSLATION Свитер
+#EXAMPLE Ich ziehe einen Pullover an.
+
+#WORD Schuh
+#TRANSLATION Ботинок
+#EXAMPLE Die Schuhe sind neu.
+
+#WORD Socke
+#TRANSLATION Носок
+#EXAMPLE Ich habe bunte Socken.
+
+#STAGE2
+#TASK
+#SENTENCE Ich trage ein ___.
+#ANSWER Hemd
+#CHOICES Hemd;Hose;Kleid;Jacke
+#EXPLANATION Я ношу рубашку
+#TASK
+#SENTENCE Die ___ ist blau.
+#ANSWER Hose
+#CHOICES Hose;Rock;Mantel;Pullover
+#EXPLANATION Синие штаны
+#TASK
+#SENTENCE Im Winter trage ich einen ___.
+#ANSWER Mantel
+#CHOICES Mantel;Jacke;Pullover;T-Shirt
+#EXPLANATION Зимой носят пальто
+
+#STAGE3
+#WORD Hemd
+#DEFINITION Ein Kleidungsstück mit Knöpfen, meist mit Kragen.
+#EXPLANATION Это рубашка
+#CHOICES Hemd;T-Shirt;Pullover;Kleid
+#WORD Kleid
+#DEFINITION Ein elegantes Kleidungsstück für Frauen.
+#EXPLANATION Это платье
+#CHOICES Kleid;Rock;Hose;Jacke
+#WORD Schuh
+#DEFINITION Etwas, das man an den Füßen trägt.
+#EXPLANATION Это ботинок
+#CHOICES Schuh;Socke;Pullover;Mantel
+
+#STAGE6
+#WORD Hemd
+#SYNONYMS Oberhemd
+#WRONG_SYNONYMS Hose, Rock
+#EXPLANATION Синоним рубашки
+#WORD Mantel
+#SYNONYMS Wintermantel
+#WRONG_SYNONYMS Jacke, Pullover
+#EXPLANATION Синоним пальто
+#WORD Schuh
+#SYNONYMS Stiefel
+#WRONG_SYNONYMS Socke, Rock
+#EXPLANATION Синоним ботинка
+
+#STAGE8
+#TEXT Im Schrank liegen (___), (___) und (___).
+#ANSWER1 Hemd
+#EXPLANATION1 Рубашка — базовая вещь
+#ANSWER2 Hose
+#EXPLANATION2 Штаны — на каждый день
+#ANSWER3 Pullover
+#EXPLANATION3 Свитер — для тепла 

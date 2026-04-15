@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: -sehen
+#FAMILY "Семья -sehen"
+#DESCRIPTION Слова с корнем -sehen (видеть)
+
+#WORD sehen
+#TRANSLATION видеть
+#EXAMPLE Ich sehe den Himmel.
+
+#WORD Aussehen
+#TRANSLATION внешний вид
+#EXAMPLE Dein Aussehen ist schön.
+
+#WORD Fernsehen
+#TRANSLATION телевидение
+#EXAMPLE Ich sehe gern fern.
+
+#WORD zusehen
+#TRANSLATION наблюдать
+#EXAMPLE Ich zusehe dem Spiel.
+
+#WORD übersehen
+#TRANSLATION просмотреть, не заметить
+#EXAMPLE Ich habe das Problem übersehen.
+
+#WORD absehen
+#TRANSLATION предвидеть
+#EXAMPLE Das war nicht abzusehen.
+
+#WORD ansehen
+#TRANSLATION смотреть на
+#EXAMPLE Ich sehe mir einen Film an.
+
+#WORD versehen
+#TRANSLATION снабжать, ошибаться
+#EXAMPLE Ich habe mich versehen.
+
+#WORD nachsehen
+#TRANSLATION проверять, смотреть вслед
+#EXAMPLE Kannst du bitte nachsehen?
+
+#WORD Vorsehung
+#TRANSLATION провидение
+#EXAMPLE Die Vorsehung wollte es so.
+
+#STAGE2
+#TASK
+#SENTENCE Ich ___ gern fern.
+#ANSWER sehe
+#CHOICES sehe;zusehe;ansehe;versehe
+#EXPLANATION Я люблю смотреть телевизор
+#TASK
+#SENTENCE Ich habe das Problem ___.
+#ANSWER übersehen
+#CHOICES übersehen;absehen;nachsehen;versehen
+#EXPLANATION Я не заметил проблему
+#TASK
+#SENTENCE Ich ___ mir einen Film an.
+#ANSWER sehe
+#CHOICES sehe;zusehe;ansehe;absehe
+#EXPLANATION Я смотрю фильм
+
+#STAGE3
+#WORD sehen
+#DEFINITION Mit den Augen wahrnehmen.
+#EXPLANATION Это видеть
+#CHOICES sehen;ansehen;zusehen;übersehen
+#WORD Aussehen
+#DEFINITION Wie jemand oder etwas aussieht.
+#EXPLANATION Это внешний вид
+#CHOICES Aussehen;Fernsehen;ansehen;versehen
+#WORD Fernsehen
+#DEFINITION Gerät oder Medium zum Anschauen von Sendungen.
+#EXPLANATION Это телевидение
+#CHOICES Fernsehen;Aussehen;nachsehen;absehen
+
+#STAGE6
+#WORD sehen
+#SYNONYMS erblicken
+#WRONG_SYNONYMS hören, sprechen
+#EXPLANATION Синоним видеть
+#WORD ansehen
+#SYNONYMS betrachten
+#WRONG_SYNONYMS versehen, absehen
+#EXPLANATION Синоним смотреть на
+#WORD nachsehen
+#SYNONYMS überprüfen
+#WRONG_SYNONYMS absehen, übersehen
+#EXPLANATION Синоним проверять
+
+#STAGE8
+#TEXT Ich (___) mir einen Film (___) und dann (___) ich fern.
+#ANSWER1 sehe
+#EXPLANATION1 Я смотрю
+#ANSWER2 an
+#EXPLANATION2 Смотреть на что-то
+#ANSWER3 fern
+#EXPLANATION3 Смотреть телевизор 

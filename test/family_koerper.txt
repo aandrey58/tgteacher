@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: Части тела
+#FAMILY "Части тела"
+#DESCRIPTION Части тела на немецком языке
+
+#WORD Kopf
+#TRANSLATION Голова
+#EXAMPLE Mein Kopf tut weh.
+
+#WORD Auge
+#TRANSLATION Глаз
+#EXAMPLE Ich sehe mit meinen Augen.
+
+#WORD Ohr
+#TRANSLATION Ухо
+#EXAMPLE Das Ohr hilft beim Hören.
+
+#WORD Nase
+#TRANSLATION Нос
+#EXAMPLE Die Nase riecht Blumen.
+
+#WORD Mund
+#TRANSLATION Рот
+#EXAMPLE Mit dem Mund esse ich.
+
+#WORD Hand
+#TRANSLATION Рука (кисть)
+#EXAMPLE Ich schreibe mit der Hand.
+
+#WORD Bein
+#TRANSLATION Нога
+#EXAMPLE Das Bein ist lang.
+
+#WORD Fuß
+#TRANSLATION Ступня
+#EXAMPLE Ich laufe auf meinen Füßen.
+
+#WORD Herz
+#TRANSLATION Сердце
+#EXAMPLE Das Herz schlägt schnell.
+
+#WORD Bauch
+#TRANSLATION Живот
+#EXAMPLE Mein Bauch knurrt.
+
+#STAGE2
+#TASK
+#SENTENCE Mein ___ tut weh.
+#ANSWER Kopf
+#CHOICES Kopf;Hand;Bein;Herz
+#EXPLANATION Болит голова
+#TASK
+#SENTENCE Ich sehe mit meinen ___.
+#ANSWER Augen
+#CHOICES Augen;Ohren;Händen;Füßen
+#EXPLANATION Видим глазами
+#TASK
+#SENTENCE Das ___ schlägt schnell.
+#ANSWER Herz
+#CHOICES Herz;Bauch;Kopf;Mund
+#EXPLANATION Сердце бьётся
+
+#STAGE3
+#WORD Kopf
+#DEFINITION Oben am Körper, enthält das Gehirn.
+#EXPLANATION Это голова
+#CHOICES Kopf;Hand;Bauch;Ohr
+#WORD Hand
+#DEFINITION Körperteil zum Greifen und Schreiben.
+#EXPLANATION Это рука
+#CHOICES Hand;Fuß;Bein;Mund
+#WORD Herz
+#DEFINITION Pumpt Blut durch den Körper.
+#EXPLANATION Это сердце
+#CHOICES Herz;Kopf;Bauch;Nase
+
+#STAGE6
+#WORD Hand
+#SYNONYMS Faust, Greifhand
+#WRONG_SYNONYMS Fuß, Bein
+#EXPLANATION Синонимы руки
+#WORD Kopf
+#SYNONYMS Schädel
+#WRONG_SYNONYMS Herz, Bauch
+#EXPLANATION Синоним головы
+#WORD Bauch
+#SYNONYMS Magen
+#WRONG_SYNONYMS Herz, Mund
+#EXPLANATION Синоним живота
+
+#STAGE8
+#TEXT Ich habe (___), (___) und (___).
+#ANSWER1 Kopf
+#EXPLANATION1 Голова — важная часть
+#ANSWER2 Hand
+#EXPLANATION2 Рука — для письма
+#ANSWER3 Herz
+#EXPLANATION3 Сердце — для жизни 

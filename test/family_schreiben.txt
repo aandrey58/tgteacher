@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: -schreiben
+#FAMILY "Семья -schreiben"
+#DESCRIPTION Слова с корнем -schreiben (писать)
+
+#WORD schreiben
+#TRANSLATION писать
+#EXAMPLE Ich schreibe einen Brief.
+
+#WORD Schreiber
+#TRANSLATION писатель, писец
+#EXAMPLE Der Schreiber arbeitet schnell.
+
+#WORD Beschreibung
+#TRANSLATION описание
+#EXAMPLE Die Beschreibung ist lang.
+
+#WORD Abschreiben
+#TRANSLATION списывать
+#EXAMPLE Du sollst nicht abschreiben!
+
+#WORD Unterschrift
+#TRANSLATION подпись
+#EXAMPLE Die Unterschrift fehlt.
+
+#WORD Verschreiben
+#TRANSLATION ошибаться при письме, прописывать (лекарство)
+#EXAMPLE Der Arzt verschreibt ein Medikament.
+
+#WORD Einschreiben
+#TRANSLATION заказное письмо
+#EXAMPLE Ich schicke ein Einschreiben.
+
+#WORD Vorschrift
+#TRANSLATION предписание
+#EXAMPLE Die Vorschrift muss man beachten.
+
+#WORD Umschreiben
+#TRANSLATION переписывать, перефразировать
+#EXAMPLE Kannst du den Text umschreiben?
+
+#WORD Handschrift
+#TRANSLATION почерк
+#EXAMPLE Deine Handschrift ist schön.
+
+#STAGE2
+#TASK
+#SENTENCE Ich ___ einen Brief.
+#ANSWER schreibe
+#CHOICES schreibe;abschreibe;umschreibe;verschreibe
+#EXPLANATION Я пишу письмо
+#TASK
+#SENTENCE Die ___ fehlt.
+#ANSWER Unterschrift
+#CHOICES Unterschrift;Handschrift;Beschreibung;Vorschrift
+#EXPLANATION Нет подписи
+#TASK
+#SENTENCE Du sollst nicht ___!
+#ANSWER abschreiben
+#CHOICES abschreiben;umschreiben;verschreiben;schreiben
+#EXPLANATION Не списывай!
+
+#STAGE3
+#WORD schreiben
+#DEFINITION Mit einem Stift Wörter auf Papier bringen.
+#EXPLANATION Это писать
+#CHOICES schreiben;abschreiben;umschreiben;verschreiben
+#WORD Beschreibung
+#DEFINITION Text, der etwas erklärt oder darstellt.
+#EXPLANATION Это описание
+#CHOICES Beschreibung;Vorschrift;Handschrift;Unterschrift
+#WORD Handschrift
+#DEFINITION Die Art, wie jemand schreibt.
+#EXPLANATION Это почерк
+#CHOICES Handschrift;Unterschrift;Schreiber;Einschreiben
+
+#STAGE6
+#WORD schreiben
+#SYNONYMS notieren
+#WRONG_SYNONYMS lesen, sprechen
+#EXPLANATION Синоним писать
+#WORD Abschreiben
+#SYNONYMS kopieren
+#WRONG_SYNONYMS umschreiben, verschreiben
+#EXPLANATION Синоним списывать
+#WORD Unterschrift
+#SYNONYMS Signatur
+#WRONG_SYNONYMS Handschrift, Vorschrift
+#EXPLANATION Синоним подписи
+
+#STAGE8
+#TEXT Ich (___) einen Text, dann (___) ich ihn und gebe meine (___).
+#ANSWER1 schreibe
+#EXPLANATION1 Я пишу
+#ANSWER2 umschreibe
+#EXPLANATION2 Переписываю/перефразирую
+#ANSWER3 Unterschrift
+#EXPLANATION3 Ставлю подпись 

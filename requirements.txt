@@ -1,0 +1,12 @@
+python-telegram-bot>=21.0
+python-dotenv
+asyncpg
+httpx>=0.27
+pandas
+openpyxl
+pyzipper
+psutil 
+yookassa>=3.0.0
+
+# Если используешь psutil для мониторинга (admin_status.py), раскомментируй:
+# psutil 

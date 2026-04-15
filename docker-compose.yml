@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16
+    container_name: tgteacher-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-tgteacher}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tgteacher-bot
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      HELP_QUESTIONS_GROUP_ID: ${HELP_QUESTIONS_GROUP_ID:-}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-tgteacher}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    volumes:
+      - ./families:/app/families
+      - ./bot/exports:/app/bot/exports
+      - ./runtime_cache:/app/runtime_cache
+
+volumes:
+  postgres_data:
+

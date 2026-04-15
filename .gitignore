@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Environments
+.env
+.venv/
+venv/
+
+# Runtime artifacts
+*.log
+bot/exports/
+runtime_cache/
+bot/help_questions_index.json
+legacy_users.json
+bot/legacy_users.json
+
+# OS/IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Archives and backups
+*.zip
+*.rar
+*.7z
+

@@ -1,0 +1,97 @@
+// MCP TEST FAMILY: Животные
+#FAMILY "Животные"
+#DESCRIPTION Животные на немецком языке
+
+#WORD Hund
+#TRANSLATION Собака
+#EXAMPLE Der Hund bellt.
+
+#WORD Katze
+#TRANSLATION Кошка
+#EXAMPLE Die Katze schläft.
+
+#WORD Pferd
+#TRANSLATION Лошадь
+#EXAMPLE Das Pferd galoppiert.
+
+#WORD Kuh
+#TRANSLATION Корова
+#EXAMPLE Die Kuh gibt Milch.
+
+#WORD Schwein
+#TRANSLATION Свинья
+#EXAMPLE Das Schwein wälzt sich im Schlamm.
+
+#WORD Schaf
+#TRANSLATION Овца
+#EXAMPLE Das Schaf hat Wolle.
+
+#WORD Ziege
+#TRANSLATION Коза
+#EXAMPLE Die Ziege klettert auf den Berg.
+
+#WORD Huhn
+#TRANSLATION Курица
+#EXAMPLE Das Huhn legt Eier.
+
+#WORD Ente
+#TRANSLATION Утка
+#EXAMPLE Die Ente schwimmt im Teich.
+
+#WORD Maus
+#TRANSLATION Мышь
+#EXAMPLE Die Maus ist klein.
+
+#STAGE2
+#TASK
+#SENTENCE Der ___ bellt.
+#ANSWER Hund
+#CHOICES Hund;Katze;Pferd;Kuh
+#EXPLANATION Только собака лает
+#TASK
+#SENTENCE Die ___ legt Eier.
+#ANSWER Huhn
+#CHOICES Huhn;Ente;Schaf;Maus
+#EXPLANATION Курица несёт яйца
+#TASK
+#SENTENCE Die ___ gibt Milch.
+#ANSWER Kuh
+#CHOICES Kuh;Schwein;Katze;Ziege
+#EXPLANATION Молоко даёт корова
+
+#STAGE3
+#WORD Hund
+#DEFINITION Ein Haustier, das oft bellt und der beste Freund des Menschen ist.
+#EXPLANATION Это собака
+#CHOICES Hund;Katze;Pferd;Maus
+#WORD Pferd
+#DEFINITION Ein großes Tier, das galoppieren kann und oft geritten wird.
+#EXPLANATION Это лошадь
+#CHOICES Pferd;Hund;Kuh;Schaf
+#WORD Ente
+#DEFINITION Ein Vogel, der schwimmen kann und im Teich lebt.
+#EXPLANATION Это утка
+#CHOICES Ente;Huhn;Katze;Schwein
+
+#STAGE6
+#WORD Hund
+#SYNONYMS Haushund
+#WRONG_SYNONYMS Katze, Maus
+#EXPLANATION Домашняя собака
+#WORD Kuh
+#SYNONYMS Milchkuh
+#WRONG_SYNONYMS Ziege, Pferd
+#EXPLANATION Молочная корова
+#WORD Schaf
+#SYNONYMS Lamm
+#WRONG_SYNONYMS Schwein, Hund
+#EXPLANATION Ягнёнок — молодой овцы
+
+#STAGE8
+#TEXT Auf dem Bauernhof gibt es (___), (___) und (___).
+#ANSWER1 Kuh
+#EXPLANATION1 Корова — классика фермы
+#ANSWER2 Schaf
+#EXPLANATION2 Овца — даёт шерсть
+#ANSWER3 Huhn
+#EXPLANATION3 Курица — несёт яйца 
