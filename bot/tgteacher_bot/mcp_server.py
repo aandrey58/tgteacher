@@ -14,7 +14,7 @@ from tgteacher_bot.db import drafts_repo as drafts, families_repo as families, c
 from tgteacher_bot.db.pool import get_pool
 from tgteacher_bot.db import tts_repo as tts
 from tgteacher_bot.db.user_repo import init_db_pg
-from tgteacher_bot.mcp_auth import READ, EDIT, PUBLISH, require_scope, verifier_from_env
+from tgteacher_bot.mcp_auth import READ, EDIT, PUBLISH, require_scope, verifier_from_env, LearnerTokenVerifier, require_learner
 
 
 def _page(limit, offset):
@@ -33,8 +33,8 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         "TGTeacher",
         instructions="Manage English lesson content. Drafts are not visible to learners. Validate the current revision before requesting approval to publish. Never publish edits, roll back, archive or restore without the user's explicit instruction. Preview edit drafts before requesting approval. Archived groups retain all learner progress.",
         stateless_http=True, json_response=True,
-        token_verifier=verifier,
-        auth=AuthSettings(issuer_url=issuer, resource_server_url=resource, required_scopes=[READ], validate_token_resource=True),
+        token_verifier=LearnerTokenVerifier(verifier, resource),
+        auth=AuthSettings(issuer_url=issuer, resource_server_url=resource, required_scopes=[], validate_token_resource=True),
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=[parsed.netloc, "127.0.0.1:*", "localhost:*"],
@@ -341,6 +341,30 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         if not confirm:
             raise ValueError("Detachment requires explicit confirmation")
         return await media_repo.detach_media(kind, draft_kind, draft_id, expected_revision, task_index, expected_task_id)
+
+    @server.tool(annotations=read)
+    async def get_learning_progress(limit: int = 30, offset: int = 0) -> dict[str, Any]:
+        """Read only the authenticated learner's group progress. Requires a Telegram-linked learner credential."""
+        from tgteacher_bot.db.srs_repo import learning_progress
+        return await learning_progress(require_learner(),limit,offset)
+
+    @server.tool(annotations=read)
+    async def get_learning_statistics(days: int = 30) -> dict[str, Any]:
+        """Read own dated lesson attempts, FSRS ratings and review counts; old undated records are reported separately."""
+        from tgteacher_bot.db.srs_repo import learning_statistics
+        return await learning_statistics(require_learner(),days)
+
+    @server.tool(annotations=read)
+    async def get_weak_words(limit: int = 30, offset: int = 0) -> dict[str, Any]:
+        """Read own difficult vocabulary based on explicit recall ratings and FSRS difficulty."""
+        from tgteacher_bot.db.srs_repo import weak_words
+        return await weak_words(require_learner(),limit,offset)
+
+    @server.tool(annotations=read)
+    async def get_due_reviews(limit: int = 30, offset: int = 0) -> dict[str, Any]:
+        """Read own currently due accessible vocabulary cards. Does not record a review."""
+        from tgteacher_bot.db.srs_repo import due_reviews
+        return await due_reviews(require_learner(),limit,offset)
 
     return server
 
