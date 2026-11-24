@@ -268,3 +268,58 @@ class DraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await drafts.validate_draft(other))["publishable"])
         with self.assertRaises(ValueError):
             await drafts.publish_draft(other, 1)
+
+    async def test_archive_preserves_every_progress_table_and_task(self):
+        from tgteacher_bot.db import families_repo as families, user_repo as users
+        from tgteacher_bot.utils.content_validation import DuplicateFamilyError
+        await drafts.create_draft(self.id, SOURCE)
+        published = await drafts.publish_draft(self.id, 1)
+        fid = published["family_id"]
+        uid = 1234
+        await users.start_family_progress_pg(uid, fid)
+        await users.set_task_done_pg(uid, fid, 1, 0)
+        await users.set_family_stage_done_pg(uid, fid, 1)
+        await users.set_family_finished_pg(uid, fid)
+        await users.increment_family_completion_count_pg(uid, fid)
+        await users.set_stage2_answer_pg(uid, fid, 0, "ticket", True)
+        await users.set_last_opened_family_place_pg(uid, fid, 1, 0)
+        await users.set_user_stage_state_pg(uid, fid, 1, {"task_idx": 0})
+        await users.set_current_family_idx_pg(uid, fid)
+        tables = ["user_family_progress", "user_task_progress",
+                  "user_last_opened_family_place", "user_stage_state", "user_current_family"]
+
+        async def snapshot():
+            async with self.pool.acquire() as conn:
+                return {table: [dict(r) for r in await conn.fetch(
+                    f"SELECT * FROM {table} WHERE family_idx=$1 ORDER BY 1,2", fid
+                )] for table in tables}
+
+        before = await snapshot()
+        self.assertTrue(all(before.values()))
+        words = await families.get_stage1_words_pg(fid)
+        archived = await families.delete_family_from_pg(fid)
+        self.assertTrue(archived["archived"])
+        self.assertEqual(await families.set_family_archived_pg(fid, True), archived)
+        self.assertEqual(await snapshot(), before)
+        self.assertEqual(await families.get_all_families_meta_pg(), [])
+        self.assertIsNone(await families.get_family_data_pg(fid))
+        self.assertTrue((await families.get_family_data_pg(fid, True))["archived_at"])
+        self.assertEqual(await users.get_started_families_ids_pg(uid), [fid])
+        self.assertEqual(await families.get_stage1_words_pg(fid), words)
+        self.assertEqual((await drafts.get_draft(self.id))["status"], "archived")
+        self.assertFalse((await drafts.validate_draft(self.id))["publishable"])
+        # Scheduled state cleanup must not delete archived lesson state.
+        await users.clean_inactive_user_states_pg(-1)
+        self.assertEqual(await snapshot(), before)
+        with self.assertRaises(DuplicateFamilyError):
+            await families.save_family_to_pg({"name": "MCP travel", "words": [{"word": "ticket", "translation": "билет"}]})
+        restored = await families.set_family_archived_pg(fid, False)
+        self.assertFalse(restored["archived"])
+        self.assertEqual(restored["family_id"], fid)
+        self.assertEqual(await snapshot(), before)
+        self.assertEqual((await families.get_all_families_meta_pg())[0]["id"], fid)
+        self.assertEqual((await drafts.get_draft(self.id))["status"], "published")
+        self.assertEqual(await families.get_stage1_words_pg(fid), words)
+        self.assertEqual(await families.set_family_archived_pg(fid, False), restored)
+        with self.assertRaises(ValueError):
+            await families.set_family_archived_pg(999999, True)
