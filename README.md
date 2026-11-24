@@ -263,3 +263,30 @@ python -m tgteacher_bot.mcp_server
 | rollback_family(family_id, version, expected_version, confirm=true) | content:publish |
 
 Workflow: get_family → create_edit_draft (UUID клиента, текущая content_version) → update_edit_draft (полный объект content из черновика; сохранить task_id для существующих заданий, не указывать ID для новых, исключить архивируемые) → preview_edit → явное подтверждение пользователя → publish_edit. Предпросмотр сообщает ID сохраняемых/заменяемых/архивируемых задач, количество новых и число затронутых ответов/учеников. Конкурентная публикация того же черновика идемпотентна, устаревшая базовая версия или ревизия отклоняется. Неизвестные ID нельзя назначать вручную; исторические ID восстанавливаются только через rollback_family.
+
+
+### Stage 3.3 — Content Operations
+
+Полный утверждённый контракт: [MCP v1.0 roadmap — 45 инструментов](docs/MCP_V1_ROADMAP.md).
+На этом этапе зарегистрировано 27 инструментов; 18 запланированы.
+
+Все шесть новых инструментов требуют `content:edit` и `expected_revision`.
+Удаление черновиков и исключение задания также требуют `confirm=true`.
+Операции работают только над неопубликованными черновиками.
+Для заданий укажите `draft_kind="new"` (TXT) или `draft_kind="edit"` (JSON), UUID черновика и этап 1–8.
+Позиции нумеруются с нуля и действительны только в указанной ревизии.
+
+| Tool | Extra arguments |
+| --- | --- |
+| delete_draft, delete_edit_draft | confirm |
+| add_tasks | stage, tasks, insert_at? |
+| update_task | stage, task_index, patch |
+| archive_task | stage, task_index, confirm |
+| reorder_tasks | stage, order (полная перестановка индексов) |
+
+Пример: `update_task(draft_kind="edit", draft_id=..., expected_revision=1, stage=1, task_index=0, patch={"translation":"чемодан"})`.
+Ответ содержит новую revision и ссылки task_refs (позиция и постоянный task_id, null для нового задания).
+Используйте новую revision в следующем вызове. Результат валидируется целиком; устаревшая ревизия отклоняется без изменений.
+При гранулярной правке TXT переформатируется в канонический вид без комментариев; незавершённый сырой TXT можно исправить через update_draft.
+Удалённые черновики остаются tombstone-записями, скрыты из списков и не могут повторно публиковаться или создаваться с прежним UUID.
+Изменения опубликованных групп применяются только через preview_edit → publish_edit; архивные задания и ответы сохраняются.
