@@ -36,6 +36,8 @@ async def init_srs(conn):
             expires_at TIMESTAMPTZ NOT NULL
         );
     """)
+    from tgteacher_bot.db.learner_preferences import init_preferences
+    await init_preferences(conn)
     if not await conn.fetchval("SELECT 1 FROM content_schema_migrations WHERE name='srs_v1'"):
         await conn.execute("""
             INSERT INTO srs_cards(user_id,family_id,task_id)
