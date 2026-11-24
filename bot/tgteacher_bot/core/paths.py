@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 
 def package_dir() -> Path:
@@ -30,5 +31,5 @@ def help_index_path() -> Path:
 
 def admins_path() -> Path:
     """Path to admins list (kept in `bot/` for backward compatibility)."""
-    return bot_dir() / "admins.txt"
+    return Path(os.environ["TGTEACHER_ADMINS_PATH"]) if os.getenv("TGTEACHER_ADMINS_PATH") else bot_dir() / "admins.txt"
 
