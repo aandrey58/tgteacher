@@ -134,6 +134,8 @@ async def insert_family_on_connection(conn, family_data: dict, folder_name: str 
             INSERT INTO stage8_tasks (family_id, task_order, text, answers, explanations, equal)
             VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
         ''', s8_tasks_to_insert)
+    from tgteacher_bot.db.content_versions import record_initial_version
+    await record_initial_version(conn, family_id)
     return family_id
 
 
@@ -150,7 +152,7 @@ async def get_family_data_pg(family_id: int, include_archived: bool = False) -> 
     pool = await get_pool()
     async with pool.acquire() as conn:
         family_meta = await conn.fetchrow('''
-            SELECT id, name, description, folder_name, target, archived_at FROM families
+            SELECT id, name, description, folder_name, target, archived_at, content_version FROM families
             WHERE id = $1 AND ($2::boolean OR archived_at IS NULL)
         ''', family_id, include_archived)
         if not family_meta: return None
@@ -161,6 +163,7 @@ async def get_family_data_pg(family_id: int, include_archived: bool = False) -> 
             'description': family_meta['description'],
             'folder_name': family_meta['folder_name'],
             'target': family_meta['target'],
+            'content_version': family_meta['content_version'],
             'archived_at': family_meta['archived_at'].isoformat() if family_meta['archived_at'] else None
         }
 
@@ -181,7 +184,7 @@ async def get_stage1_words_pg(family_id: int) -> List[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         words = await conn.fetch('''
-            SELECT word, translation, example, example_translation, hint FROM stage1_words WHERE family_id = $1 ORDER BY word_order
+            SELECT word, translation, example, example_translation, hint FROM stage1_words WHERE family_id = $1 AND archived_at IS NULL ORDER BY word_order, id
         ''', family_id)
         return [{'word': r['word'], 'translation': r['translation'], 'example': r['example'], 'example_translation': r['example_translation'], 'hint': r['hint']} for r in words]
 
@@ -190,7 +193,7 @@ async def get_stage2_tasks_pg(family_id: int) -> List[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         s2_tasks = await conn.fetch('''
-            SELECT sentence, answer, choices, explanation FROM stage2_tasks WHERE family_id = $1 ORDER BY task_order
+            SELECT sentence, answer, choices, explanation FROM stage2_tasks WHERE family_id = $1 AND archived_at IS NULL ORDER BY task_order, id
         ''', family_id)
         return [{'sentence': r['sentence'], 'answer': r['answer'], 'choices': json.loads(r['choices']), 'explanation': r['explanation']} for r in s2_tasks]
 
@@ -199,7 +202,7 @@ async def get_stage4_tasks_pg(family_id: int) -> List[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         s4_tasks = await conn.fetch('''
-            SELECT sentence, answer, choices, explanation FROM stage4_tasks WHERE family_id = $1 ORDER BY task_order
+            SELECT sentence, answer, choices, explanation FROM stage4_tasks WHERE family_id = $1 AND archived_at IS NULL ORDER BY task_order, id
         ''', family_id)
         return [{'sentence': r['sentence'], 'answer': r['answer'], 'choices': json.loads(r['choices']), 'explanation': r['explanation']} for r in s4_tasks]
 
@@ -208,7 +211,7 @@ async def get_stage3_tasks_pg(family_id: int) -> List[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         s3_tasks = await conn.fetch('''
-            SELECT word, definition, explanation, choices FROM stage3_tasks WHERE family_id = $1 ORDER BY task_order
+            SELECT word, definition, explanation, choices FROM stage3_tasks WHERE family_id = $1 AND archived_at IS NULL ORDER BY task_order, id
         ''', family_id)
         tasks_list = []
         for r in s3_tasks:
@@ -223,7 +226,7 @@ async def get_stage5_tasks_pg(family_id: int) -> List[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         s5_tasks = await conn.fetch('''
-            SELECT image, answer, alternatives, explanation FROM stage5_tasks WHERE family_id = $1 ORDER BY task_order
+            SELECT image, answer, alternatives, explanation FROM stage5_tasks WHERE family_id = $1 AND archived_at IS NULL ORDER BY task_order, id
         ''', family_id)
         tasks = []
         for r in s5_tasks:
@@ -240,7 +243,7 @@ async def get_stage6_tasks_pg(family_id: int) -> List[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         s6_tasks = await conn.fetch('''
-            SELECT word, synonyms, wrong_synonyms, explanation FROM stage6_tasks WHERE family_id = $1 ORDER BY task_order
+            SELECT word, synonyms, wrong_synonyms, explanation FROM stage6_tasks WHERE family_id = $1 AND archived_at IS NULL ORDER BY task_order, id
         ''', family_id)
         return [{'word': r['word'], 'synonyms': json.loads(r['synonyms']), 'wrong_synonyms': json.loads(r['wrong_synonyms']), 'explanation': r['explanation']} for r in s6_tasks]
 
@@ -249,7 +252,7 @@ async def get_stage7_tasks_pg(family_id: int) -> List[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         s7_tasks = await conn.fetch('''
-            SELECT task, audio, answer, choices, explanation FROM stage7_tasks WHERE family_id = $1 ORDER BY task_order
+            SELECT task, audio, answer, choices, explanation FROM stage7_tasks WHERE family_id = $1 AND archived_at IS NULL ORDER BY task_order, id
         ''', family_id)
         tasks = []
         for r in s7_tasks:
@@ -266,7 +269,7 @@ async def get_stage8_tasks_pg(family_id: int) -> List[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         s8_tasks_raw = await conn.fetch('''
-            SELECT text, answers, explanations, equal FROM stage8_tasks WHERE family_id = $1 ORDER BY task_order
+            SELECT text, answers, explanations, equal FROM stage8_tasks WHERE family_id = $1 AND archived_at IS NULL ORDER BY task_order, id
         ''', family_id)
         tasks_list = []
         for r in s8_tasks_raw:
@@ -310,56 +313,56 @@ async def get_all_stage_tasks_counts_for_families(family_ids: List[int]) -> Dict
 
         # Query for Stage 1 word counts
         s1_counts = await conn.fetch('''
-            SELECT family_id, COUNT(*) as count FROM stage1_words WHERE family_id = ANY($1::int[]) GROUP BY family_id
+            SELECT family_id, COUNT(*) as count FROM stage1_words WHERE family_id = ANY($1::int[]) AND archived_at IS NULL GROUP BY family_id
         ''', family_ids)
         for row in s1_counts:
             results.setdefault(row['family_id'], {})[1] = row['count']
 
         # Query for Stage 2 task counts
         s2_counts = await conn.fetch('''
-            SELECT family_id, COUNT(*) as count FROM stage2_tasks WHERE family_id = ANY($1::int[]) GROUP BY family_id
+            SELECT family_id, COUNT(*) as count FROM stage2_tasks WHERE family_id = ANY($1::int[]) AND archived_at IS NULL GROUP BY family_id
         ''', family_ids)
         for row in s2_counts:
             results.setdefault(row['family_id'], {})[2] = row['count']
 
         # Query for Stage 4 task counts
         s4_counts = await conn.fetch('''
-            SELECT family_id, COUNT(*) as count FROM stage4_tasks WHERE family_id = ANY($1::int[]) GROUP BY family_id
+            SELECT family_id, COUNT(*) as count FROM stage4_tasks WHERE family_id = ANY($1::int[]) AND archived_at IS NULL GROUP BY family_id
         ''', family_ids)
         for row in s4_counts:
             results.setdefault(row['family_id'], {})[4] = row['count']
 
         # Query for Stage 3 task counts
         s3_counts = await conn.fetch('''
-            SELECT family_id, COUNT(*) as count FROM stage3_tasks WHERE family_id = ANY($1::int[]) GROUP BY family_id
+            SELECT family_id, COUNT(*) as count FROM stage3_tasks WHERE family_id = ANY($1::int[]) AND archived_at IS NULL GROUP BY family_id
         ''', family_ids)
         for row in s3_counts:
             results.setdefault(row['family_id'], {})[3] = row['count']
 
         # Query for Stage 5 task counts
         s5_counts = await conn.fetch('''
-            SELECT family_id, COUNT(*) as count FROM stage5_tasks WHERE family_id = ANY($1::int[]) GROUP BY family_id
+            SELECT family_id, COUNT(*) as count FROM stage5_tasks WHERE family_id = ANY($1::int[]) AND archived_at IS NULL GROUP BY family_id
         ''', family_ids)
         for row in s5_counts:
             results.setdefault(row['family_id'], {})[5] = row['count']
 
         # Query for Stage 6 task counts
         s6_counts = await conn.fetch('''
-            SELECT family_id, COUNT(*) as count FROM stage6_tasks WHERE family_id = ANY($1::int[]) GROUP BY family_id
+            SELECT family_id, COUNT(*) as count FROM stage6_tasks WHERE family_id = ANY($1::int[]) AND archived_at IS NULL GROUP BY family_id
         ''', family_ids)
         for row in s6_counts:
             results.setdefault(row['family_id'], {})[6] = row['count']
 
         # Query for Stage 7 task counts
         s7_counts = await conn.fetch('''
-            SELECT family_id, COUNT(*) as count FROM stage7_tasks WHERE family_id = ANY($1::int[]) GROUP BY family_id
+            SELECT family_id, COUNT(*) as count FROM stage7_tasks WHERE family_id = ANY($1::int[]) AND archived_at IS NULL GROUP BY family_id
         ''', family_ids)
         for row in s7_counts:
             results.setdefault(row['family_id'], {})[7] = row['count']
 
         # Query for Stage 8 task counts
         s8_counts = await conn.fetch('''
-            SELECT family_id, COUNT(*) as count FROM stage8_tasks WHERE family_id = ANY($1::int[]) GROUP BY family_id
+            SELECT family_id, COUNT(*) as count FROM stage8_tasks WHERE family_id = ANY($1::int[]) AND archived_at IS NULL GROUP BY family_id
         ''', family_ids)
         for row in s8_counts:
             results.setdefault(row['family_id'], {})[8] = row['count']
