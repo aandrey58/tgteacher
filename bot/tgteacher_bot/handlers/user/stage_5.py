@@ -24,6 +24,7 @@ import random
 from functools import lru_cache
 import gc
 from tgteacher_bot.core import paths
+from tgteacher_bot.utils.english_answers import is_correct_answer as _is_correct_answer
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def get_stage5_keyboard(task_idx: int, total_tasks: int, answered: bool, is_fina
 
 
 def format_stage5_text(idx: int, total: int, awaiting_input: bool, user_answer: str | None, feedback: str | None):
-    base = f"Задание {idx+1}/{total}\n<b>Впиши подходящее слово:</b>\nПришли в ответ текст с определённым артиклем."
+    base = f"Задание {idx+1}/{total}\n<b>Впиши подходящее слово:</b>\nНапиши слово или выражение по-английски. Артикль не обязателен, если он не является частью ответа."
     if user_answer is not None:
         safe_answer = html.escape(user_answer)
         base += f"\n\nВаш ответ: <code>{safe_answer}</code>"
@@ -131,21 +132,6 @@ async def _delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id:
             to_clear_updates[mid_key] = None
     if to_clear_updates:
         save_message_ids(user_id, st5.get('family_idx'), 5, to_clear_updates)
-
-
-def _normalize_spaces(s: str) -> str:
-    return ' '.join(s.strip().split())
-
-
-def _is_correct_answer(user_text: str, answer: str, alternatives: list[str]) -> bool:
-    u = _normalize_spaces(user_text)
-    a = _normalize_spaces(answer)
-    if u == a:
-        return True
-    for alt in alternatives or []:
-        if u == _normalize_spaces(alt):
-            return True
-    return False
 
 
 def _log_image_diagnostics(image_path: str):
