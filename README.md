@@ -290,3 +290,36 @@ Workflow: get_family → create_edit_draft (UUID клиента, текущая 
 При гранулярной правке TXT переформатируется в канонический вид без комментариев; незавершённый сырой TXT можно исправить через update_draft.
 Удалённые черновики остаются tombstone-записями, скрыты из списков и не могут повторно публиковаться или создаваться с прежним UUID.
 Изменения опубликованных групп применяются только через preview_edit → publish_edit; архивные задания и ответы сохраняются.
+
+
+### Stage 4 — TTS Integration
+
+33/45 MCP tools. Primary gateways: OpenRouter, KodikRouter, Timeweb AI Gateway; optional direct OpenAI and ElevenLabs.
+
+Set keys in MCP process environment: OPENROUTER_API_KEY, KODIK_API_KEY, TIMEWEB_AI_TOKEN. Do not commit secrets.
+For paid generation configure TGTEACHER_TTS_GATEWAY_MODELS as JSON of provider -> model ID -> tariff and audio profile. Example (illustrative rates only, NOT current provider prices; verify actual pricing and billing limits before enabling):
+
+```json
+{
+  "openrouter": {
+    "google/gemini-2.5-flash-tts": {"microusd_per_byte": 100, "format": "pcm", "pcm_rate": 24000, "pcm_channels": 1}
+  },
+  "kodikrouter": {
+    "microsoft/mai-voice-2": {"microusd_per_byte": 100, "format": "mp3", "voices": ["en-US-Harper:MAI-Voice-2"]}
+  },
+  "timeweb": {
+    "openai/gpt-4o-mini-tts": {"microusd_per_byte": 100, "format": "wav", "voices": ["alloy", "nova"]}
+  }
+}
+```
+
+TGTEACHER_TTS_DAILY_MICROUSD defaults to 0 (no new paid calls). 1 USD = 1,000,000 micro-USD.
+Rates must include conservative allowance for token-based billing, gateway markup and exchange-rate movements. Estimates are local reservations, not a guarantee of invoice amounts. Set provider-side limits too. Failed/pending requests retain reservations; no automatic retry or fallback. Optional direct providers use OPENAI_API_KEY / ELEVENLABS_API_KEY, TGTEACHER_TTS_OPENAI_MICROUSD_PER_BYTE / TGTEACHER_TTS_ELEVENLABS_MICROUSD_PER_BYTE and optional *_VOICES allowlists (ElevenLabs requires voice IDs). Direct OpenAI uses legacy tts-1; do not enable unless available.
+
+list_tts_providers returns configured profiles and public gateway catalogs. list_voices(provider, model) uses published voice enums where available, otherwise configured allowlists. Timeweb voice discovery is documentation-based. Public catalog availability does not guarantee account access. Model selection is mandatory if several profiles are configured for a gateway.
+estimate_tts_cost accepts items with provider, model, voice, text; generate_audio takes those plus max_cost_microusd and confirm=true. batch_generate_audio accepts 1–10 items and a single approved ceiling. Each text is limited to 2000 UTF-8 bytes.
+attach_audio(draft_kind, draft_id, expected_revision, task_index, asset_id, expected_task_id) updates Stage 7 only. For a published task in an edit draft supply its stable ID; for new tasks use null. Publication is separate. Audio is stored as immutable SHA-256-addressed PostgreSQL MP3 bytes; group versions retain audio history and ZIP export includes generated assets. Legacy folder media remains supported.
+
+Install FFmpeg for non-MP3 source formats (included in Dockerfile). PCM requires signed 16-bit little-endian samples and an explicit verified sample rate/channel count. Gateway models must support the configured format. New image publication remains deferred to Stage 5. TTS tests use mock providers and synthetic audio; no live credentials needed.
+
+API contracts: https://openrouter.ai/docs/guides/overview/multimodal/tts ; https://kodikrouter.ru/docs/audio ; https://timeweb.cloud/docs/ai-gateway/audio-api .
