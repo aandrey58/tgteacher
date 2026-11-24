@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import zipfile
 from tgteacher_bot.db.tts_repo import get_audio_bytes
+from tgteacher_bot.db.image_repo import get_image_bytes
 from tgteacher_bot.db.drafts_repo import get_published_source
 from tgteacher_bot.db.content_versions import get_current_content
 from tgteacher_bot.utils.family_renderer import render_family_txt
@@ -40,11 +41,10 @@ async def admin_family_export_callback(update: Update, context: ContextTypes.DEF
                     archive.writestr(f'{archive_name}/lesson.txt', source)
                     media = {t['image'] for t in current['stage5_tasks']} | {t['audio'] for t in current['stage7_tasks']}
                     for name in sorted(media):
-                        if name in {t['audio'] for t in current['stage7_tasks']}:
-                            data = await get_audio_bytes(name)
-                            if data is not None:
-                                archive.writestr(f'{archive_name}/{name}', data)
-                                continue
+                        data = await get_audio_bytes(name) if name in {t['audio'] for t in current['stage7_tasks']} else await get_image_bytes(name)
+                        if data is not None:
+                            archive.writestr(f'{archive_name}/{name}', data)
+                            continue
                         if not folder_name or os.path.basename(name) != name:
                             raise ValueError('Некорректный медиафайл')
                         matches = [f for f in os.listdir(family_folder) if f.casefold() == name.casefold()]
