@@ -86,6 +86,7 @@ def get_main_menu(user_id=None):
         [InlineKeyboardButton("▶️ Начать обучение", callback_data="start_learning")],
         [InlineKeyboardButton("📚 Выбрать группу слов", callback_data="choose_family")],
         [InlineKeyboardButton("📈 Мой прогресс", callback_data="my_progress")],
+        [InlineKeyboardButton("🔁 Повторить слова", callback_data="srs_next")],
         [InlineKeyboardButton("💎 Подписка", callback_data="subscription")],
         [InlineKeyboardButton("🆘 Помощь", callback_data="help")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
@@ -234,6 +235,8 @@ def _register_handlers(application: Application):
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
 
+    from tgteacher_bot.handlers.user.reviews import register_review_handlers
+    register_review_handlers(application)
     register_family_handlers(application)
     register_progress_handlers(application)
     register_settings_handlers(application)
