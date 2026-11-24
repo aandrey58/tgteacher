@@ -353,3 +353,20 @@ TGTEACHER_IMAGE_DAILY_MICROUSD defaults to zero. This is a separate UTC-day rese
 Shared trusted content-admin scopes: read for discovery/estimation, edit for generation/attachments, publish for publication. No live paid calls in CI. Before deploying back up PostgreSQL (now includes image bytes), configure model profiles, and run a small approved live smoke test for each gateway.
 
 Docs: https://openrouter.ai/docs/guides/overview/multimodal/image-generation ; https://kodikrouter.ru/docs/images ; https://timeweb.cloud/docs/ai-gateway/ ; https://github.com/timeweb-cloud/sdk-javascript .
+
+
+### Stage 6 — Spaced Repetition (FSRS)
+
+43/45 MCP tools. Official Py-FSRS 6.3.1 (FSRS-6, default weights, 90% desired retention, deterministic intervals without fuzzing).
+When a learner completes a stage-1 vocabulary card, it enters their personal review queue. Migration enrolls previously completed stage-1 cards, including archived cards, without inventing recall ratings or dates. The existing latest answer per exercise is retained as an undated legacy snapshot. New stage 2–8 answer writes append dated events in the same PostgreSQL transaction. Recognition answers are not treated as FSRS ratings.
+
+Telegram private chat: /review or the main menu "Повторить слова" displays a due English word; recall the translation, reveal it, then choose Again / Hard / Good / Easy. FSRS stores full card state, due timestamp, before/after state and review log. One outstanding ticket per learner expires in 15 minutes, is bound to task ID, card revision and group version, and is consumed atomically on rating. Reorder and media/cosmetic edits retain card IDs; replaced words become new IDs. Archive and rollback retain history; archived words/groups and inaccessible VIP cards are omitted from the queue. Restarting a lesson does not erase independent review history. Account deletion erases learner credentials and SRS data transactionally.
+
+MCP learner authorization: in a **private Telegram chat**, run /review_token to issue a 24-hour personal bearer token (requires /start first). Only its SHA-256 hash is stored; issuance rotates the previous token. /review_revoke revokes it. Configure the MCP client with that bearer credential using HTTPS outside localhost. Do not send the token in prompts or share it. The learner token grants learner:read only, with identity derived from the server-verified token. Existing content credentials cannot query personal statistics and learner credentials cannot read or mutate content-admin tools. OAuth content introspection does not grant learner scope. External OAuth account linking and automatic token refresh are not implemented.
+
+- get_learning_progress(limit,offset): own started group totals and completions, including archived history.
+- get_learning_statistics(days=30): own dated lesson attempts/correct counts, undated legacy snapshot count, FSRS rating histogram and accessible/due card counts.
+- get_weak_words(limit,offset): rated accessible vocabulary with recent (last) rating Again/Hard or FSRS difficulty >=7.
+- get_due_reviews(limit,offset): own accessible vocabulary due at current time. Read-only, not a review submission endpoint.
+
+All learner tools intentionally omit a user_id argument. Stage 6 schedules vocabulary cards, not every exercise or inferred cross-exercise word association. No reminders, per-learner optimizer, reverse translation or adaptive preferences yet. Existing lesson UI continues unchanged. Review ratings are self-assessed; no claim of objective recall accuracy.
