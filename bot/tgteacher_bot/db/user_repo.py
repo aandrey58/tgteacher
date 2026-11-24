@@ -270,16 +270,21 @@ async def init_db_pg():
 
         from tgteacher_bot.db.drafts_repo import init_drafts
         await init_drafts(conn)
+        from tgteacher_bot.db.content_schema import migrate_content
+        await migrate_content(conn)
 
 @track_db_errors
 async def set_task_done_pg(user_id: int, family_idx: int, stage_num: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done)
-            VALUES ($1, $2, $3, $4, 1)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET is_done = 1
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done)
+            SELECT $1, $2, $3, $4, task_id, 1 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=$3 AND task_idx=$4
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET is_done = 1
         ''', user_id, family_idx, stage_num, task_idx)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def start_family_progress_pg(user_id: int, family_idx: int):
@@ -332,41 +337,50 @@ async def get_completed_families_info_pg(user_id: int):
 async def set_stage2_answer_pg(user_id: int, family_idx: int, task_idx: int, selected_choice_text: str, is_correct: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 2, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 2, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=2 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_choice_text, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def set_stage4_answer_pg(user_id: int, family_idx: int, task_idx: int, selected_choice_text: str, is_correct: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 4, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 4, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=4 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_choice_text, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def set_stage5_answer_pg(user_id: int, family_idx: int, task_idx: int, user_answer: str, is_correct: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 5, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET 
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 5, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=5 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET 
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, user_answer, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def get_stage5_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 5 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -382,7 +396,7 @@ async def get_completed_tasks_pg(user_ids: List[int], family_idx: int, stage_num
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
-            SELECT user_id, task_idx FROM user_task_progress
+            SELECT user_id, task_idx FROM active_user_task_progress
             WHERE user_id = ANY($1::bigint[]) AND family_idx = $2 AND stage_num = $3 AND is_done = 1
         ''', user_ids, family_idx, stage_num)
         
@@ -442,7 +456,7 @@ async def reset_family_progress_pg(user_id: int, family_idx: int):
         
         # Удаляем прогресс, но сохраняем запись с completion_count
         await conn.execute('''
-            DELETE FROM user_task_progress WHERE user_id = $1 AND family_idx = $2
+            DELETE FROM active_user_task_progress WHERE user_id = $1 AND family_idx = $2
         ''', user_id, family_idx)
         await conn.execute('''
             DELETE FROM user_last_opened_family_place WHERE user_id = $1 AND family_idx = $2
@@ -466,7 +480,7 @@ async def get_stage2_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 2 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -478,7 +492,7 @@ async def get_stage4_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 4 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -489,19 +503,22 @@ async def get_stage4_answer_pg(user_id: int, family_idx: int, task_idx: int):
 async def set_stage3_answer_pg(user_id: int, family_idx: int, task_idx: int, selected_choice_text: str, is_correct: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 3, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET 
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 3, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=3 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET 
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_choice_text, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def get_stage3_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 3 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -513,19 +530,22 @@ async def set_stage6_answer_pg(user_id: int, family_idx: int, task_idx: int, sel
     selected_choices_str = ';'.join(selected_choices)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 6, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET 
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 6, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=6 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET 
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_choices_str, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def get_stage6_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 6 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -538,19 +558,22 @@ async def set_stage8_answer_pg(user_id: int, family_idx: int, task_idx: int, sel
     selected_words_str = ';'.join(selected_words)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 8, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET 
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 8, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=8 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET 
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_words_str, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def get_stage8_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 8 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -568,7 +591,7 @@ async def get_all_stage_answers_for_family_pg(user_ids: List[int], family_idx: i
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
             SELECT user_id, stage_num, task_idx, selected_choice_text, is_correct 
-            FROM user_task_progress
+            FROM active_user_task_progress
             WHERE user_id = ANY($1::bigint[]) AND family_idx = $2 AND is_done = 1 AND is_correct IS NOT NULL
         ''', user_ids, family_idx)
         
@@ -668,7 +691,7 @@ async def get_all_user_completed_tasks_counts(user_id: int, family_ids: List[int
 
         rows = await conn.fetch('''
             SELECT family_idx, stage_num, COUNT(task_idx) as count
-            FROM user_task_progress
+            FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = ANY($2::int[]) AND is_done = 1
             GROUP BY family_idx, stage_num
         ''', user_id, family_ids)
@@ -813,7 +836,7 @@ async def get_all_users_progress_for_family_pg(family_id: int) -> List[Dict[str,
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
             SELECT user_id, stage_num, COUNT(task_idx) as completed_tasks
-            FROM user_task_progress
+            FROM active_user_task_progress
             WHERE family_idx = $1 AND is_done = 1
             GROUP BY user_id, stage_num
             ORDER BY user_id, stage_num
@@ -830,7 +853,7 @@ async def get_family_stage_answers_stats_pg(family_id: int) -> List[Dict[str, An
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
             SELECT stage_num, is_correct, COUNT(*) as count
-            FROM user_task_progress
+            FROM active_user_task_progress
             WHERE family_idx = $1 AND stage_num IN (2, 3, 4, 5, 6, 8) AND is_correct IS NOT NULL
             GROUP BY stage_num, is_correct
         ''', family_id)
@@ -847,6 +870,8 @@ async def delete_user_and_progress_pg(user_id: int):
         await conn.execute('DELETE FROM user_stage_state WHERE user_id = $1', user_id)
         await conn.execute('DELETE FROM user_current_family WHERE user_id = $1', user_id)
         # Удаляем самого пользователя
+        await conn.execute('DELETE FROM family_version_learner_history WHERE user_id = $1', user_id)
+        await conn.execute('DELETE FROM legacy_unmapped_progress WHERE user_id = $1', user_id)
         await conn.execute('DELETE FROM users WHERE user_id = $1', user_id) 
 
 @track_db_errors
@@ -1005,7 +1030,7 @@ async def delete_all_user_progress_for_family(family_idx: int):
         
         # Удаляем прогресс
         await conn.execute('DELETE FROM user_family_progress WHERE family_idx = $1', family_idx)
-        await conn.execute('DELETE FROM user_task_progress WHERE family_idx = $1', family_idx)
+        await conn.execute('DELETE FROM active_user_task_progress WHERE family_idx = $1', family_idx)
         await conn.execute('DELETE FROM user_last_opened_family_place WHERE family_idx = $1', family_idx)
         await conn.execute('DELETE FROM user_stage_state WHERE family_idx = $1', family_idx)
         await conn.execute('DELETE FROM user_current_family WHERE family_idx = $1', family_idx)
@@ -1021,19 +1046,22 @@ async def delete_all_user_progress_for_family(family_idx: int):
 async def set_stage7_answer_pg(user_id: int, family_idx: int, task_idx: int, selected_choice_text: str, is_correct: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 7, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 7, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=7 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_choice_text, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def get_stage7_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 7 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
