@@ -1,6 +1,6 @@
 # TGTeacher MCP v1.0 — approved roadmap
 
-Target: **45 distinct MCP tools**. Stage 3.3 establishes 27 implemented tools; the remaining 18 are planned, not exposed as placeholders.
+Target: **45 distinct MCP tools**. Stage 4 establishes 33 implemented tools; the remaining 12 are planned, not exposed as placeholders.
 
 | # | Tool | Stage | Status | Purpose |
 |---:|---|---|---|---|
@@ -31,12 +31,12 @@ Target: **45 distinct MCP tools**. Stage 3.3 establishes 27 implemented tools; t
 | 25 | `update_task` | Stage 3.3 — Content Operations | implemented | Patch one draft task |
 | 26 | `archive_task` | Stage 3.3 — Content Operations | implemented | Remove task from draft; archive on publication |
 | 27 | `reorder_tasks` | Stage 3.3 — Content Operations | implemented | Reorder draft tasks without changing IDs |
-| 28 | `list_tts_providers` | Stage 4 — TTS | planned | Discover configured providers |
-| 29 | `list_voices` | Stage 4 — TTS | planned | Discover voice options |
-| 30 | `estimate_tts_cost` | Stage 4 — TTS | planned | Estimate provider cost before generation |
-| 31 | `generate_audio` | Stage 4 — TTS | planned | Generate one audio asset |
-| 32 | `batch_generate_audio` | Stage 4 — TTS | planned | Generate bounded batch |
-| 33 | `attach_audio` | Stage 4 — TTS | planned | Attach existing audio to draft task |
+| 28 | `list_tts_providers` | Stage 4 — TTS | implemented | Discover configured providers |
+| 29 | `list_voices` | Stage 4 — TTS | implemented | Discover voice options |
+| 30 | `estimate_tts_cost` | Stage 4 — TTS | implemented | Estimate provider cost before generation |
+| 31 | `generate_audio` | Stage 4 — TTS | implemented | Generate one audio asset |
+| 32 | `batch_generate_audio` | Stage 4 — TTS | implemented | Generate bounded batch |
+| 33 | `attach_audio` | Stage 4 — TTS | implemented | Attach existing audio to draft task |
 | 34 | `generate_image` | Stage 5 — Images | planned | Generate one image asset |
 | 35 | `batch_generate_images` | Stage 5 — Images | planned | Generate bounded batch |
 | 36 | `attach_image` | Stage 5 — Images | planned | Attach image to draft task |
@@ -67,6 +67,8 @@ Target: **45 distinct MCP tools**. Stage 3.3 establishes 27 implemented tools; t
 - No planned tool is exposed before its implementation, authorization and tests are ready.
 - All draft writes require expected_revision. Publish/rollback are explicitly approved and preserve historical task IDs, versions and answers.
 - Stage 3.3 supports draft_kind=new (TXT) and draft_kind=edit (JSON). Stage 1 is vocabulary; stages 2–8 are exercises. Task indices and insertion positions are zero-based, scoped to the specified stage and revision. Reorder accepts a full permutation. New tasks omit task_id; patch cannot change it. Draft deletion uses tombstones, hides drafts from list results and prevents UUID reuse; direct get returns deleted status. Published drafts cannot be deleted. Explicit confirmation is required for deletion and task removal.
-- Granular mutations validate the entire resulting draft, use compare-and-swap and return revision plus task references rather than full content. New-group TXT is canonicalized on granular mutation (comments/formatting are not preserved); use update_draft to edit incomplete raw TXT. Existing media generation/publication restrictions remain.
+- Granular mutations validate the entire resulting draft, use compare-and-swap and return revision plus task references rather than full content. New-group TXT is canonicalized on granular mutation (comments/formatting are not preserved); use update_draft to edit incomplete raw TXT. Stage 7 generated audio is now supported; new images remain blocked until Stage 5.
 - Media generation must enforce quotas, authorization, cost limits and safe storage; no live provider requests in CI.
 - Every stage must add tests and pass GitHub Actions on PostgreSQL before being marked implemented.
+
+- Stage 4: two configured adapters (OpenAI/ElevenLabs); reader discovery/estimates, editor generation/attachment, publisher publication. MP3 assets are immutable SHA-256-addressed PostgreSQL bytes. Cache keys include provider/model/voice/text/format. Paid generation uses explicit approval, per-call ceiling and atomic UTC-day reservations; failed or pending requests are not automatically retried. Costs are configured estimates, not verified provider invoices. History is retained in family_audio_versions and version snapshots.
