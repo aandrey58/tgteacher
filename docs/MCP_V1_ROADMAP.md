@@ -1,6 +1,6 @@
 # TGTeacher MCP v1.0 — approved roadmap
 
-Target: **45 distinct MCP tools**. Stage 5 establishes 39 implemented tools; the remaining 6 are planned, not exposed as placeholders.
+Target: **45 distinct MCP tools**. Stage 6 establishes 43 implemented tools; the remaining 2 are planned, not exposed as placeholders.
 
 | # | Tool | Stage | Status | Purpose |
 |---:|---|---|---|---|
@@ -43,10 +43,10 @@ Target: **45 distinct MCP tools**. Stage 5 establishes 39 implemented tools; the
 | 37 | `list_media` | Stage 5 — Images | implemented | List accessible assets |
 | 38 | `get_media` | Stage 5 — Images | implemented | Read asset metadata |
 | 39 | `detach_media` | Stage 5 — Images | implemented | Remove draft attachment without deleting history |
-| 40 | `get_learning_progress` | Stage 6 — SRS | planned | Read authorized learner progress |
-| 41 | `get_learning_statistics` | Stage 6 — SRS | planned | Read authorized learning statistics |
-| 42 | `get_weak_words` | Stage 6 — SRS | planned | Identify weak vocabulary |
-| 43 | `get_due_reviews` | Stage 6 — SRS | planned | Get scheduled reviews |
+| 40 | `get_learning_progress` | Stage 6 — SRS | implemented | Read authorized learner progress |
+| 41 | `get_learning_statistics` | Stage 6 — SRS | implemented | Read authorized learning statistics |
+| 42 | `get_weak_words` | Stage 6 — SRS | implemented | Identify weak vocabulary |
+| 43 | `get_due_reviews` | Stage 6 — SRS | implemented | Get scheduled reviews |
 | 44 | `get_learner_profile` | Stage 7 — Adaptive Learning | planned | Read authorized learner profile |
 | 45 | `update_learning_preferences` | Stage 7 — Adaptive Learning | planned | Update authorized learning preferences |
 
@@ -63,7 +63,7 @@ Target: **45 distinct MCP tools**. Stage 5 establishes 39 implemented tools; the
 
 ## Contract and security
 
-- Current scopes: content:read, content:edit, content:publish. Future learner tools require separate learner authorization and data isolation; content credentials alone must not grant access to personal learner data.
+- Current scopes: content:read, content:edit, content:publish, learner:read. Telegram-linked learner credentials grant only self-access, never content scopes. Content credentials cannot access learner data.
 - No planned tool is exposed before its implementation, authorization and tests are ready.
 - All draft writes require expected_revision. Publish/rollback are explicitly approved and preserve historical task IDs, versions and answers.
 - Stage 3.3 supports draft_kind=new (TXT) and draft_kind=edit (JSON). Stage 1 is vocabulary; stages 2–8 are exercises. Task indices and insertion positions are zero-based, scoped to the specified stage and revision. Reorder accepts a full permutation. New tasks omit task_id; patch cannot change it. Draft deletion uses tombstones, hides drafts from list results and prevents UUID reuse; direct get returns deleted status. Published drafts cannot be deleted. Explicit confirmation is required for deletion and task removal.
@@ -76,3 +76,5 @@ Target: **45 distinct MCP tools**. Stage 5 establishes 39 implemented tools; the
 - Gateway catalog discovery: OpenRouter speech models endpoint; KodikRouter speech-filtered public catalog; Timeweb documented model/voices (no verified speech-specific discovery API). Configured per-model conservative tariff and output format are required for generation, with live enumerated voices when available or administrator allowlists. Raw PCM requires an explicit sample rate/channel profile; WAV/Opus/AAC/FLAC (Timeweb) and PCM are normalized through bounded FFmpeg to MP3. No automatic cross-gateway fallback or retry; costs are reservation estimates, not billing reconciliation.
 
 - Stage 5: OpenRouter dedicated Images API (optional chat surface), KodikRouter and Timeweb Images API. Explicit model/size/tariff profiles, default dry-run estimates, atomic UTC-day image reservations independent of TTS, no automatic retries. Bounded PNG/JPEG/WebP decode and JPEG normalization. Shared audio/image metadata and version links; detach invalidates publication until replacement or task removal. No external image URL fetching. All calls to paid providers in CI are mocked.
+
+- Stage 6: Py-FSRS 6.3.1, 90% target retention, vocabulary cards keyed by learner/family/permanent stage-1 task ID. Existing completed words become due without invented recall ratings; undated legacy answer snapshots stay separate from dated lesson events. Explicit four-point recall ratings in private Telegram chat drive scheduling. One-time, user-bound review tickets fence duplicate callbacks, stale versions, expired sessions and inaccessible groups. Telegram-issued hashed 24-hour learner tokens are rotatable/revocable; all four learner MCP tools derive identity from authentication, not caller parameters. Archive/rollback retains cards and review history. No automatic ratings from recognition exercises.
