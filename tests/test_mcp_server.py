@@ -88,7 +88,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         result = self.rpc("tools/list").json()["result"]
         names = {tool["name"] for tool in result["tools"]}
-        self.assertEqual(len(names), 39)
+        self.assertEqual(len(names), 43)
         roadmap = (ROOT / "docs" / "MCP_V1_ROADMAP.md").read_text(encoding="utf-8")
         rows = re.findall(r"^\| \d+ \| `(\w+)` \| .*? \| (implemented|planned) \|", roadmap, re.M)
         self.assertEqual(len(rows), 45)
@@ -101,6 +101,11 @@ class HTTPTests(unittest.TestCase):
         template = self.call("get_content_format", {}, READER)
         self.assertFalse(template.get("isError", False), template)
         self.assertIn("#FAMILY", str(template))
+
+    def test_content_roles_cannot_read_learner_data(self):
+        for token in (READER,EDITOR,PUBLISHER):
+            for name in ("get_learning_progress","get_learning_statistics","get_weak_words","get_due_reviews"):
+                self.assertTrue(self.call(name,{},token)["isError"])
 
     def test_permissions_and_confirmation(self):
         args = {"draft_id": str(uuid.uuid4()), "expected_revision": 1, "confirm": True}
