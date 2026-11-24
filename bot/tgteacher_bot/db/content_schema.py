@@ -83,6 +83,8 @@ async def migrate_content(conn):
 
         from tgteacher_bot.db.tts_repo import init_tts
         await init_tts(conn)
+        from tgteacher_bot.db.image_repo import init_images
+        await init_images(conn)
 
         # Snapshot every pre-existing group exactly once, without changing its IDs.
         from tgteacher_bot.db.content_versions import record_initial_version
