@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "vite build"
+    "build": "vite build",
+    "test": "playwright test"
   },
   "dependencies": {
     "react": "19.2.0",
@@ -13,6 +14,7 @@
     "lucide-react": "0.468.0"
   },
   "devDependencies": {
-    "vite": "7.2.2"
+    "vite": "7.2.2",
+    "@playwright/test": "1.56.1"
   }
 }
