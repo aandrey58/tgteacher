@@ -87,7 +87,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         result = self.rpc("tools/list").json()["result"]
         names = {tool["name"] for tool in result["tools"]}
-        self.assertEqual(len(names), 12)
+        self.assertEqual(len(names), 20)
         self.assertIn("publish_draft", names)
         self.assertIn("archive_family", names)
         self.assertIn("restore_family", names)
@@ -114,7 +114,7 @@ class HTTPTests(unittest.TestCase):
     @unittest.skipUnless(os.getenv("TGTEACHER_TEST_DSN"), "requires isolated PostgreSQL")
     def test_http_publish_and_search_real_database(self):
         import asyncpg
-        from tgteacher_bot.db import user_repo, families_repo
+        from tgteacher_bot.db import user_repo, families_repo, content_versions
         from tgteacher_bot import mcp_server
         dsn = os.environ["TGTEACHER_TEST_DSN"]
         schema = "test_" + uuid.uuid4().hex
@@ -140,7 +140,7 @@ class HTTPTests(unittest.TestCase):
                 await admin.close()
 
         self.addCleanup(self.client.portal.call, cleanup)
-        for module in (user_repo, families_repo, drafts, mcp_server):
+        for module in (user_repo, families_repo, drafts, mcp_server, content_versions):
             p = patch.object(module, "get_pool", new=AsyncMock(return_value=pool))
             p.start()
             self.addCleanup(p.stop)
@@ -180,6 +180,26 @@ class HTTPTests(unittest.TestCase):
         self.assertFalse(restored["archived"])
         self.assertEqual(restored["family_id"], published["family_id"])
         self.assertEqual(len(invoke("list_families", {}, READER)["items"]), 1)
+        edit_id = str(uuid.uuid4())
+        args = {"family_id": published["family_id"], "draft_id": edit_id, "expected_version": 1}
+        self.assertTrue(self.call("create_edit_draft", args, READER)["isError"])
+        edit = invoke("create_edit_draft", args, EDITOR)
+        edit["content"]["words"][0]["translation"] = "проездной билет"
+        edit = invoke("update_edit_draft", {"draft_id": edit_id, "expected_revision": 1, "content": edit["content"]}, EDITOR)
+        preview = invoke("preview_edit", {"draft_id": edit_id}, READER)
+        self.assertTrue(preview["valid"])
+        args = {"draft_id": edit_id, "expected_revision": edit["revision"], "confirm": True}
+        self.assertTrue(self.call("publish_edit", args, EDITOR)["isError"])
+        self.assertTrue(self.call("publish_edit", {**args, "confirm": False}, PUBLISHER)["isError"])
+        result = invoke("publish_edit", args, PUBLISHER)
+        self.assertEqual(result["content_version"], 2)
+        family = invoke("get_family", {"family_id": published["family_id"]}, READER)
+        self.assertEqual(family["words"][0]["translation"], "проездной билет")
+        self.assertEqual(family["words"][0]["task_id"], edit["content"]["words"][0]["task_id"])
+        self.assertEqual(len(invoke("list_family_versions", {"family_id": published["family_id"]}, READER)["items"]), 2)
+        restored = invoke("rollback_family", {"family_id": published["family_id"], "version": 1, "expected_version": 2, "confirm": True}, PUBLISHER)
+        self.assertEqual(restored["content_version"], 3)
+
 
     def test_foreign_origin_rejected(self):
         self.assertNotEqual(self.rpc("tools/list", origin="https://evil.example").status_code, 200)
@@ -272,7 +292,7 @@ class DraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_archive_preserves_every_progress_table_and_task(self):
         from tgteacher_bot.db import families_repo as families, user_repo as users
         from tgteacher_bot.utils.content_validation import DuplicateFamilyError
-        await drafts.create_draft(self.id, SOURCE)
+        await drafts.create_draft(self.id, SOURCE + '#STAGE2\n#TASK\n#SENTENCE Show your ___.\n#ANSWER ticket\n#CHOICES ticket; bag; hat; coat\n')
         published = await drafts.publish_draft(self.id, 1)
         fid = published["family_id"]
         uid = 1234
