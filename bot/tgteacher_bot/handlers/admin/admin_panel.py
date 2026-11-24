@@ -6,11 +6,12 @@ import os
 import tgteacher_bot.utils.families_data as families_data
 import shutil
 from tgteacher_bot.handlers.admin.admin_list import (
-    get_admins_list_menu, admin_list_admins_page_callback, get_admins_main_menu,
+    get_admin_ids, get_admins_list_menu, admin_list_admins_page_callback, get_admins_main_menu,
     admin_add_admin_callback, admin_cancel_add_admin_callback, admin_add_admin_ok_callback, admin_add_admin_text_handler,
     register_admin_list_handlers
 )
-from tgteacher_bot.db.families_repo import delete_family_from_pg
+from tgteacher_bot.db.families_repo import delete_family_from_pg, set_family_archived_pg
+from tgteacher_bot.db.pool import get_pool
 from tgteacher_bot.utils.common import OK_MENU
 from tgteacher_bot.handlers.admin.admin_status import track_metrics
 from tgteacher_bot.handlers.admin.admin_users import admin_users_callback
@@ -44,6 +45,7 @@ ADMIN_FAMILIES_MENU_BUTTONS = [
     [InlineKeyboardButton('👥 Для всех пользователей', callback_data='admin_list_families_all')],
     [InlineKeyboardButton('💎 Для пользователей с подпиской', callback_data='admin_list_families_vip')],
     [InlineKeyboardButton('👤 Для пользователей без подписки', callback_data='admin_list_families_free')],
+    [InlineKeyboardButton('📦 Архив групп', callback_data='admin_archive_page_0')],
     [InlineKeyboardButton('📄 Получить шаблон', callback_data='admin_get_template')],
     [InlineKeyboardButton('⬅️ Назад', callback_data='admin_panel')],
 ]
@@ -148,7 +150,7 @@ def get_admin_family_menu(fam_id, last_page: int | None = None, target_filter: s
     
     return InlineKeyboardMarkup([
         [InlineKeyboardButton('📤 Выгрузить файлы', callback_data=f'admin_family_export_{fam_id}')],
-        [InlineKeyboardButton('🗑️ Удалить', callback_data=f'admin_delete_family_confirm_{fam_id}')],
+        [InlineKeyboardButton('📦 В архив', callback_data=f'admin_delete_family_confirm_{fam_id}')],
         [InlineKeyboardButton('⬅️ Назад', callback_data=back_cb)]
     ])
 
@@ -320,13 +322,16 @@ async def admin_family_menu_callback(update: Update, context: ContextTypes.DEFAU
 @track_metrics
 async def admin_delete_family_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if str(update.effective_user.id) not in get_admin_ids():
+        await query.answer('Недостаточно прав.', show_alert=True)
+        return
     await query.answer()
     fam_id = int(query.data.replace('admin_delete_family_confirm_', ''))
     fam = next((f for f in families_data.ALL_FAMILIES_META if f['id'] == fam_id), None)
     if not fam:
         await query.edit_message_text('Ошибка: группа слов не найдена.', reply_markup=get_admin_families_list_menu(context.user_data.get('admin_families_last_page', 0), context.user_data.get('admin_families_target_filter', 'all')))
         return
-    text = f'🗑 <b>Удалить группу слов:</b> {fam["name"]}?'
+    text = f'📦 <b>Архивировать группу слов:</b> {fam["name"]}?\nПрогресс учеников и материалы сохранятся.'
     last_page = context.user_data.get('admin_families_last_page', None)
     target_filter = context.user_data.get('admin_families_target_filter', None)
     await query.edit_message_text(text, reply_markup=get_admin_delete_confirm_menu(fam_id, last_page, target_filter), parse_mode='HTML')
@@ -334,6 +339,9 @@ async def admin_delete_family_confirm_callback(update: Update, context: ContextT
 @track_metrics
 async def admin_delete_family_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if str(update.effective_user.id) not in get_admin_ids():
+        await query.answer('Недостаточно прав.', show_alert=True)
+        return
     await query.answer()
     fam_id = int(query.data.replace('admin_delete_family_', ''))
     fam = next((f for f in families_data.ALL_FAMILIES_META if f['id'] == fam_id), None)
@@ -342,17 +350,65 @@ async def admin_delete_family_callback(update: Update, context: ContextTypes.DEF
         target_filter = context.user_data.pop('admin_families_target_filter', 'all')
         await query.edit_message_text('Ошибка: группа слов не найдена.', reply_markup=get_admin_families_list_menu(last_page, target_filter))
         return
-    folder_name = fam.get('folder_name')
-    family_folder = os.path.join(families_data.families_dir, folder_name) if folder_name else None
-    if family_folder and os.path.isdir(family_folder):
-        shutil.rmtree(family_folder)
-    # Удаляем из БД
     await delete_family_from_pg(fam['id'])
     # MCP: Обновляем метаданные семей после удаления
     await families_data._load_initial_families_meta()
     last_page = context.user_data.pop('admin_families_last_page', 0)
     target_filter = context.user_data.pop('admin_families_target_filter', 'all')
-    await query.edit_message_text('✅ Группа слов удалена!', reply_markup=get_admin_families_list_menu(last_page, target_filter))
+    await query.edit_message_text('✅ Группа в архиве. Прогресс сохранён!', reply_markup=get_admin_families_list_menu(last_page, target_filter))
+
+async def admin_archive_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if str(update.effective_user.id) not in get_admin_ids():
+        await query.answer('Недостаточно прав.', show_alert=True)
+        return
+    await query.answer()
+    page = int(query.data.rsplit('_', 1)[1])
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, name FROM families WHERE archived_at IS NOT NULL
+            ORDER BY archived_at DESC, id DESC LIMIT 8 OFFSET $1
+        """, page * 7)
+    keyboard = [[InlineKeyboardButton(f"↩️ {r['name']}", callback_data=f"admin_restore_confirm_{r['id']}")] for r in rows[:7]]
+    nav = []
+    if page:
+        nav.append(InlineKeyboardButton('⬅️', callback_data=f'admin_archive_page_{page-1}'))
+    if len(rows) > 7:
+        nav.append(InlineKeyboardButton('➡️', callback_data=f'admin_archive_page_{page+1}'))
+    if nav:
+        keyboard.append(nav)
+    keyboard.append([InlineKeyboardButton('⬅️ В меню групп', callback_data='admin_families')])
+    await query.edit_message_text('📦 Архив групп. Выберите группу для восстановления.' if rows else '📦 Здесь нет групп.',
+                                  reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def admin_restore_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if str(update.effective_user.id) not in get_admin_ids():
+        await query.answer('Недостаточно прав.', show_alert=True)
+        return
+    await query.answer()
+    family_id = int(query.data.rsplit('_', 1)[1])
+    await query.edit_message_text('Восстановить группу с прежним прогрессом учеников?', reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton('✅ Восстановить', callback_data=f'admin_restore_apply_{family_id}')],
+        [InlineKeyboardButton('Отмена', callback_data='admin_archive_page_0')],
+    ]))
+
+
+async def admin_restore_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if str(update.effective_user.id) not in get_admin_ids():
+        await query.answer('Недостаточно прав.', show_alert=True)
+        return
+    await query.answer()
+    family_id = int(query.data.rsplit('_', 1)[1])
+    await set_family_archived_pg(family_id, False)
+    await families_data.refresh_families_meta()
+    await query.edit_message_text('✅ Группа восстановлена с прежним прогрессом.', reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton('⬅️ К архиву', callback_data='admin_archive_page_0')],
+    ]))
+
 
 @track_metrics
 async def admin_add_family_ok_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -618,6 +674,342 @@ async def snapshots_export_thanks_callback(update, context):
 
 def register_admin_handlers(application):
     # Callback-обработчики
+    application.add_handler(CallbackQueryHandler(admin_archive_page_callback, pattern=r'^admin_archive_page_\d+    application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern='^admin_panel$'))
+    application.add_handler(CallbackQueryHandler(admin_families_callback, pattern='^admin_families$'))
+    application.add_handler(CallbackQueryHandler(admin_add_family_callback, pattern='^admin_add_family$'))
+    application.add_handler(CallbackQueryHandler(admin_cancel_add_family_callback, pattern='^admin_cancel_add_family$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_callback, pattern='^admin_list_families$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_callback, pattern='^admin_list_families_page_\d+_\w+$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_all_callback, pattern='^admin_list_families_all$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_vip_callback, pattern='^admin_list_families_vip$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_free_callback, pattern='^admin_list_families_free$'))
+    application.add_handler(CallbackQueryHandler(admin_family_menu_callback, pattern='^admin_family_\d+_\d+_\w+$'))
+    application.add_handler(CallbackQueryHandler(admin_delete_family_confirm_callback, pattern='^admin_delete_family_confirm_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_delete_family_callback, pattern='^admin_delete_family_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_add_family_ok_callback, pattern='^admin_add_family_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_file_exists_ok_callback, pattern='^admin_file_exists_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_file_format_ok_callback, pattern='^admin_file_format_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_get_template_callback, pattern='^admin_get_template$'))
+    application.add_handler(CallbackQueryHandler(admin_template_ok_callback, pattern='^admin_template_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_list_admins_callback, pattern='^admin_list_admins$'))
+    application.add_handler(CallbackQueryHandler(admin_list_admins_list_callback, pattern='^admin_list_admins_list$'))
+    application.add_handler(CallbackQueryHandler(admin_list_admins_page_callback, pattern='^admin_list_admins_page_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_add_admin_callback, pattern='^admin_add_admin$'))
+    application.add_handler(CallbackQueryHandler(admin_cancel_add_admin_callback, pattern='^admin_cancel_add_admin$'))
+    application.add_handler(CallbackQueryHandler(admin_add_admin_ok_callback, pattern='^admin_add_admin_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_status_callback, pattern='^admin_status$'))
+    application.add_handler(CallbackQueryHandler(admin_status_refresh_callback, pattern='^admin_status_refresh$'))
+    application.add_handler(CallbackQueryHandler(admin_status_info_callback, pattern='^admin_status_info$'))
+    application.add_handler(CallbackQueryHandler(admin_status_logs_callback, pattern='^admin_status_logs$'))
+    application.add_handler(CallbackQueryHandler(admin_logs_ok_callback, pattern='^admin_logs_dismiss$'))
+    application.add_handler(CallbackQueryHandler(admin_status_snapshots_callback, pattern='^admin_status_snapshots$'))
+    application.add_handler(CallbackQueryHandler(snapshots_capture_now_callback, pattern='^snapshots_capture_now$'))
+    application.add_handler(CallbackQueryHandler(snapshots_last_callback, pattern='^snapshots_last$'))
+    application.add_handler(CallbackQueryHandler(snapshots_recent_callback, pattern='^snapshots_recent$'))
+    application.add_handler(CallbackQueryHandler(snapshots_export_callback, pattern='^snapshots_export_(1h|24h|7d)$'))
+    application.add_handler(CallbackQueryHandler(snapshots_export_thanks_callback, pattern='^snapshots_export_thanks$'))
+    application.add_handler(CallbackQueryHandler(snapshots_toggle_auto_callback, pattern='^snapshots_toggle_auto$'))
+    application.add_handler(CallbackQueryHandler(admin_users_callback, pattern='^admin_users$'))
+    # MCP: не забудь зарегистрировать хэндлеры из admin_users.py для подменю, пагинации и просмотра инфы о юзере
+
+    from tgteacher_bot.handlers.admin.admin_broadcast import (
+        admin_broadcast_callback,
+        admin_broadcast_target_callback,
+        admin_broadcast_cancel_callback,
+        admin_broadcast_hide_callback,
+        admin_broadcast_message_handler,
+        admin_broadcast_send_callback,
+    )
+    application.add_handler(CallbackQueryHandler(admin_broadcast_callback, pattern='^admin_broadcast$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_target_callback, pattern='^admin_broadcast_target_(all|subs|nosubs)$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_cancel_callback, pattern='^admin_broadcast_cancel$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_hide_callback, pattern='^admin_broadcast_hide$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_send_callback, pattern='^admin_broadcast_send$'))
+
+    application.add_handler(MessageHandler(filters.Document.ALL | filters.ANIMATION, validate_and_extract_family_zip_with_ux, block=False))
+    
+    async def admin_wrong_file_handler(update, context):
+        # Если ждём ID админа, не мешаем другому хэндлеру
+        if context.user_data.get('waiting_for_admin_id'):
+            return None
+        if not context.user_data.get('waiting_for_family_zip'):
+            return None
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+        except Exception as e:
+            import logging
+            logging.error(f'[TGTeacher] Не удалось удалить сообщение пользователя с неправильным файлом: {e}', exc_info=True)
+        await update.message.reply_text(
+            '❌ Пожалуйста, пришли .txt-файл по шаблону.',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('✅ Ок', callback_data='admin_file_format_ok')]
+            ])
+        )
+        return None
+
+    # MCP: ОТЛАДОЧНЫЕ ОБЕРТКИ ДЛЯ ХЭНДЛЕРОВ
+    async def debug_admin_add_admin_text_handler(update, context):
+        print('MCP DEBUG: debug_admin_add_admin_text_handler вызван')
+        result = await admin_add_admin_text_handler(update, context)
+        print(f'MCP DEBUG: admin_add_admin_text_handler вернул: {result}')
+        return result
+    
+    async def debug_admin_wrong_file_handler(update, context):
+        print('MCP DEBUG: debug_admin_wrong_file_handler вызван')
+        result = await admin_wrong_file_handler(update, context)
+        print(f'MCP DEBUG: admin_wrong_file_handler вернул: {result}')
+        return result
+
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & (~filters.COMMAND), debug_admin_add_admin_text_handler, block=False))
+    
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & (~filters.COMMAND), debug_admin_wrong_file_handler, block=False))
+
+    # MCP: экспорт файлов семьи
+    from tgteacher_bot.services.exports.admin_family_export import admin_family_export_callback, admin_family_export_thanks_callback
+    application.add_handler(CallbackQueryHandler(admin_family_export_callback, pattern='^admin_family_export_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_family_export_thanks_callback, pattern='^admin_family_export_thanks$'))
+
+    application.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & (
+            (filters.TEXT & (~filters.COMMAND)) | filters.PHOTO | filters.VIDEO | filters.Document.ALL
+        ),
+        admin_broadcast_message_handler,
+        block=False
+    ), group=-1)
+
+    register_admin_list_handlers(application)
+
+    # MCP: Регистрируем хэндлеры для управления подписками
+    from tgteacher_bot.services.payments.sub_pay import register_admin_sub_pay_handlers
+    register_admin_sub_pay_handlers(application)
+
+def update_families():
+    families_data.ALL_FAMILIES_META.clear()
+    families_data.ALL_FAMILIES_META.extend(load_all_families_from_dir(families_data.families_dir)) ))
+    application.add_handler(CallbackQueryHandler(admin_restore_confirm_callback, pattern=r'^admin_restore_confirm_\d+    application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern='^admin_panel$'))
+    application.add_handler(CallbackQueryHandler(admin_families_callback, pattern='^admin_families$'))
+    application.add_handler(CallbackQueryHandler(admin_add_family_callback, pattern='^admin_add_family$'))
+    application.add_handler(CallbackQueryHandler(admin_cancel_add_family_callback, pattern='^admin_cancel_add_family$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_callback, pattern='^admin_list_families$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_callback, pattern='^admin_list_families_page_\d+_\w+$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_all_callback, pattern='^admin_list_families_all$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_vip_callback, pattern='^admin_list_families_vip$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_free_callback, pattern='^admin_list_families_free$'))
+    application.add_handler(CallbackQueryHandler(admin_family_menu_callback, pattern='^admin_family_\d+_\d+_\w+$'))
+    application.add_handler(CallbackQueryHandler(admin_delete_family_confirm_callback, pattern='^admin_delete_family_confirm_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_delete_family_callback, pattern='^admin_delete_family_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_add_family_ok_callback, pattern='^admin_add_family_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_file_exists_ok_callback, pattern='^admin_file_exists_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_file_format_ok_callback, pattern='^admin_file_format_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_get_template_callback, pattern='^admin_get_template$'))
+    application.add_handler(CallbackQueryHandler(admin_template_ok_callback, pattern='^admin_template_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_list_admins_callback, pattern='^admin_list_admins$'))
+    application.add_handler(CallbackQueryHandler(admin_list_admins_list_callback, pattern='^admin_list_admins_list$'))
+    application.add_handler(CallbackQueryHandler(admin_list_admins_page_callback, pattern='^admin_list_admins_page_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_add_admin_callback, pattern='^admin_add_admin$'))
+    application.add_handler(CallbackQueryHandler(admin_cancel_add_admin_callback, pattern='^admin_cancel_add_admin$'))
+    application.add_handler(CallbackQueryHandler(admin_add_admin_ok_callback, pattern='^admin_add_admin_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_status_callback, pattern='^admin_status$'))
+    application.add_handler(CallbackQueryHandler(admin_status_refresh_callback, pattern='^admin_status_refresh$'))
+    application.add_handler(CallbackQueryHandler(admin_status_info_callback, pattern='^admin_status_info$'))
+    application.add_handler(CallbackQueryHandler(admin_status_logs_callback, pattern='^admin_status_logs$'))
+    application.add_handler(CallbackQueryHandler(admin_logs_ok_callback, pattern='^admin_logs_dismiss$'))
+    application.add_handler(CallbackQueryHandler(admin_status_snapshots_callback, pattern='^admin_status_snapshots$'))
+    application.add_handler(CallbackQueryHandler(snapshots_capture_now_callback, pattern='^snapshots_capture_now$'))
+    application.add_handler(CallbackQueryHandler(snapshots_last_callback, pattern='^snapshots_last$'))
+    application.add_handler(CallbackQueryHandler(snapshots_recent_callback, pattern='^snapshots_recent$'))
+    application.add_handler(CallbackQueryHandler(snapshots_export_callback, pattern='^snapshots_export_(1h|24h|7d)$'))
+    application.add_handler(CallbackQueryHandler(snapshots_export_thanks_callback, pattern='^snapshots_export_thanks$'))
+    application.add_handler(CallbackQueryHandler(snapshots_toggle_auto_callback, pattern='^snapshots_toggle_auto$'))
+    application.add_handler(CallbackQueryHandler(admin_users_callback, pattern='^admin_users$'))
+    # MCP: не забудь зарегистрировать хэндлеры из admin_users.py для подменю, пагинации и просмотра инфы о юзере
+
+    from tgteacher_bot.handlers.admin.admin_broadcast import (
+        admin_broadcast_callback,
+        admin_broadcast_target_callback,
+        admin_broadcast_cancel_callback,
+        admin_broadcast_hide_callback,
+        admin_broadcast_message_handler,
+        admin_broadcast_send_callback,
+    )
+    application.add_handler(CallbackQueryHandler(admin_broadcast_callback, pattern='^admin_broadcast$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_target_callback, pattern='^admin_broadcast_target_(all|subs|nosubs)$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_cancel_callback, pattern='^admin_broadcast_cancel$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_hide_callback, pattern='^admin_broadcast_hide$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_send_callback, pattern='^admin_broadcast_send$'))
+
+    application.add_handler(MessageHandler(filters.Document.ALL | filters.ANIMATION, validate_and_extract_family_zip_with_ux, block=False))
+    
+    async def admin_wrong_file_handler(update, context):
+        # Если ждём ID админа, не мешаем другому хэндлеру
+        if context.user_data.get('waiting_for_admin_id'):
+            return None
+        if not context.user_data.get('waiting_for_family_zip'):
+            return None
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+        except Exception as e:
+            import logging
+            logging.error(f'[TGTeacher] Не удалось удалить сообщение пользователя с неправильным файлом: {e}', exc_info=True)
+        await update.message.reply_text(
+            '❌ Пожалуйста, пришли .txt-файл по шаблону.',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('✅ Ок', callback_data='admin_file_format_ok')]
+            ])
+        )
+        return None
+
+    # MCP: ОТЛАДОЧНЫЕ ОБЕРТКИ ДЛЯ ХЭНДЛЕРОВ
+    async def debug_admin_add_admin_text_handler(update, context):
+        print('MCP DEBUG: debug_admin_add_admin_text_handler вызван')
+        result = await admin_add_admin_text_handler(update, context)
+        print(f'MCP DEBUG: admin_add_admin_text_handler вернул: {result}')
+        return result
+    
+    async def debug_admin_wrong_file_handler(update, context):
+        print('MCP DEBUG: debug_admin_wrong_file_handler вызван')
+        result = await admin_wrong_file_handler(update, context)
+        print(f'MCP DEBUG: admin_wrong_file_handler вернул: {result}')
+        return result
+
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & (~filters.COMMAND), debug_admin_add_admin_text_handler, block=False))
+    
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & (~filters.COMMAND), debug_admin_wrong_file_handler, block=False))
+
+    # MCP: экспорт файлов семьи
+    from tgteacher_bot.services.exports.admin_family_export import admin_family_export_callback, admin_family_export_thanks_callback
+    application.add_handler(CallbackQueryHandler(admin_family_export_callback, pattern='^admin_family_export_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_family_export_thanks_callback, pattern='^admin_family_export_thanks$'))
+
+    application.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & (
+            (filters.TEXT & (~filters.COMMAND)) | filters.PHOTO | filters.VIDEO | filters.Document.ALL
+        ),
+        admin_broadcast_message_handler,
+        block=False
+    ), group=-1)
+
+    register_admin_list_handlers(application)
+
+    # MCP: Регистрируем хэндлеры для управления подписками
+    from tgteacher_bot.services.payments.sub_pay import register_admin_sub_pay_handlers
+    register_admin_sub_pay_handlers(application)
+
+def update_families():
+    families_data.ALL_FAMILIES_META.clear()
+    families_data.ALL_FAMILIES_META.extend(load_all_families_from_dir(families_data.families_dir)) ))
+    application.add_handler(CallbackQueryHandler(admin_restore_apply_callback, pattern=r'^admin_restore_apply_\d+    application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern='^admin_panel$'))
+    application.add_handler(CallbackQueryHandler(admin_families_callback, pattern='^admin_families$'))
+    application.add_handler(CallbackQueryHandler(admin_add_family_callback, pattern='^admin_add_family$'))
+    application.add_handler(CallbackQueryHandler(admin_cancel_add_family_callback, pattern='^admin_cancel_add_family$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_callback, pattern='^admin_list_families$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_callback, pattern='^admin_list_families_page_\d+_\w+$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_all_callback, pattern='^admin_list_families_all$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_vip_callback, pattern='^admin_list_families_vip$'))
+    application.add_handler(CallbackQueryHandler(admin_list_families_free_callback, pattern='^admin_list_families_free$'))
+    application.add_handler(CallbackQueryHandler(admin_family_menu_callback, pattern='^admin_family_\d+_\d+_\w+$'))
+    application.add_handler(CallbackQueryHandler(admin_delete_family_confirm_callback, pattern='^admin_delete_family_confirm_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_delete_family_callback, pattern='^admin_delete_family_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_add_family_ok_callback, pattern='^admin_add_family_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_file_exists_ok_callback, pattern='^admin_file_exists_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_file_format_ok_callback, pattern='^admin_file_format_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_get_template_callback, pattern='^admin_get_template$'))
+    application.add_handler(CallbackQueryHandler(admin_template_ok_callback, pattern='^admin_template_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_list_admins_callback, pattern='^admin_list_admins$'))
+    application.add_handler(CallbackQueryHandler(admin_list_admins_list_callback, pattern='^admin_list_admins_list$'))
+    application.add_handler(CallbackQueryHandler(admin_list_admins_page_callback, pattern='^admin_list_admins_page_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_add_admin_callback, pattern='^admin_add_admin$'))
+    application.add_handler(CallbackQueryHandler(admin_cancel_add_admin_callback, pattern='^admin_cancel_add_admin$'))
+    application.add_handler(CallbackQueryHandler(admin_add_admin_ok_callback, pattern='^admin_add_admin_ok$'))
+    application.add_handler(CallbackQueryHandler(admin_status_callback, pattern='^admin_status$'))
+    application.add_handler(CallbackQueryHandler(admin_status_refresh_callback, pattern='^admin_status_refresh$'))
+    application.add_handler(CallbackQueryHandler(admin_status_info_callback, pattern='^admin_status_info$'))
+    application.add_handler(CallbackQueryHandler(admin_status_logs_callback, pattern='^admin_status_logs$'))
+    application.add_handler(CallbackQueryHandler(admin_logs_ok_callback, pattern='^admin_logs_dismiss$'))
+    application.add_handler(CallbackQueryHandler(admin_status_snapshots_callback, pattern='^admin_status_snapshots$'))
+    application.add_handler(CallbackQueryHandler(snapshots_capture_now_callback, pattern='^snapshots_capture_now$'))
+    application.add_handler(CallbackQueryHandler(snapshots_last_callback, pattern='^snapshots_last$'))
+    application.add_handler(CallbackQueryHandler(snapshots_recent_callback, pattern='^snapshots_recent$'))
+    application.add_handler(CallbackQueryHandler(snapshots_export_callback, pattern='^snapshots_export_(1h|24h|7d)$'))
+    application.add_handler(CallbackQueryHandler(snapshots_export_thanks_callback, pattern='^snapshots_export_thanks$'))
+    application.add_handler(CallbackQueryHandler(snapshots_toggle_auto_callback, pattern='^snapshots_toggle_auto$'))
+    application.add_handler(CallbackQueryHandler(admin_users_callback, pattern='^admin_users$'))
+    # MCP: не забудь зарегистрировать хэндлеры из admin_users.py для подменю, пагинации и просмотра инфы о юзере
+
+    from tgteacher_bot.handlers.admin.admin_broadcast import (
+        admin_broadcast_callback,
+        admin_broadcast_target_callback,
+        admin_broadcast_cancel_callback,
+        admin_broadcast_hide_callback,
+        admin_broadcast_message_handler,
+        admin_broadcast_send_callback,
+    )
+    application.add_handler(CallbackQueryHandler(admin_broadcast_callback, pattern='^admin_broadcast$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_target_callback, pattern='^admin_broadcast_target_(all|subs|nosubs)$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_cancel_callback, pattern='^admin_broadcast_cancel$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_hide_callback, pattern='^admin_broadcast_hide$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_send_callback, pattern='^admin_broadcast_send$'))
+
+    application.add_handler(MessageHandler(filters.Document.ALL | filters.ANIMATION, validate_and_extract_family_zip_with_ux, block=False))
+    
+    async def admin_wrong_file_handler(update, context):
+        # Если ждём ID админа, не мешаем другому хэндлеру
+        if context.user_data.get('waiting_for_admin_id'):
+            return None
+        if not context.user_data.get('waiting_for_family_zip'):
+            return None
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+        except Exception as e:
+            import logging
+            logging.error(f'[TGTeacher] Не удалось удалить сообщение пользователя с неправильным файлом: {e}', exc_info=True)
+        await update.message.reply_text(
+            '❌ Пожалуйста, пришли .txt-файл по шаблону.',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('✅ Ок', callback_data='admin_file_format_ok')]
+            ])
+        )
+        return None
+
+    # MCP: ОТЛАДОЧНЫЕ ОБЕРТКИ ДЛЯ ХЭНДЛЕРОВ
+    async def debug_admin_add_admin_text_handler(update, context):
+        print('MCP DEBUG: debug_admin_add_admin_text_handler вызван')
+        result = await admin_add_admin_text_handler(update, context)
+        print(f'MCP DEBUG: admin_add_admin_text_handler вернул: {result}')
+        return result
+    
+    async def debug_admin_wrong_file_handler(update, context):
+        print('MCP DEBUG: debug_admin_wrong_file_handler вызван')
+        result = await admin_wrong_file_handler(update, context)
+        print(f'MCP DEBUG: admin_wrong_file_handler вернул: {result}')
+        return result
+
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & (~filters.COMMAND), debug_admin_add_admin_text_handler, block=False))
+    
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & (~filters.COMMAND), debug_admin_wrong_file_handler, block=False))
+
+    # MCP: экспорт файлов семьи
+    from tgteacher_bot.services.exports.admin_family_export import admin_family_export_callback, admin_family_export_thanks_callback
+    application.add_handler(CallbackQueryHandler(admin_family_export_callback, pattern='^admin_family_export_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_family_export_thanks_callback, pattern='^admin_family_export_thanks$'))
+
+    application.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & (
+            (filters.TEXT & (~filters.COMMAND)) | filters.PHOTO | filters.VIDEO | filters.Document.ALL
+        ),
+        admin_broadcast_message_handler,
+        block=False
+    ), group=-1)
+
+    register_admin_list_handlers(application)
+
+    # MCP: Регистрируем хэндлеры для управления подписками
+    from tgteacher_bot.services.payments.sub_pay import register_admin_sub_pay_handlers
+    register_admin_sub_pay_handlers(application)
+
+def update_families():
+    families_data.ALL_FAMILIES_META.clear()
+    families_data.ALL_FAMILIES_META.extend(load_all_families_from_dir(families_data.families_dir)) ))
     application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern='^admin_panel$'))
     application.add_handler(CallbackQueryHandler(admin_families_callback, pattern='^admin_families$'))
     application.add_handler(CallbackQueryHandler(admin_add_family_callback, pattern='^admin_add_family$'))
