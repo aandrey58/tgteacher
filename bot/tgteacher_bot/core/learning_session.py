@@ -50,7 +50,8 @@ class LearningApplication(Application):
         is_history = plain.startswith(("progress_", "families_page_")) or plain in ("my_progress", "choose_family")
         user_data = self.user_data.get(user.id, {}) if user else {}
         state5 = user_data.get("stage5") or {}
-        is_text = bool(not query and getattr(update, "message", None) and state5.get("awaiting_input"))
+        is_text = bool(not query and getattr(update, "message", None) and getattr(update.message, "text", None)
+                       and not update.message.text.startswith("/") and state5.get("awaiting_input"))
         if not user or not (family_match or is_stage or is_history or is_text):
             return await super().process_update(update)
         pool = await get_pool()
@@ -80,6 +81,12 @@ class LearningApplication(Application):
                         else:
                             await update.message.reply_text(message)
                         return
+                if family_match and fid and version:
+                    for n in range(1, 9):
+                        key = f'stage{n}'
+                        state = user_data.get(key)
+                        if state and (state.get('family_idx') != fid or state.get('content_version', 1) != version):
+                            user_data.pop(key, None)
                 if query and stamp:
                     query.update_callback_data(plain)
                 token = SESSION.set((fid, version) if fid and version else None)
