@@ -12,6 +12,7 @@ READ = "content:read"
 EDIT = "content:edit"
 PUBLISH = "content:publish"
 LEARNER_READ = "learner:read"
+LEARNER_EDIT = "learner:edit"
 
 
 class StaticTokenVerifier:
@@ -100,11 +101,11 @@ class LearnerTokenVerifier:
         if not row:
             return None
         return AccessToken(token=token,client_id=f"learner:{row['user_id']}",
-                           scopes=[LEARNER_READ],expires_at=int(row["expires_at"].timestamp()),resource=self.resource)
+                           scopes=[LEARNER_READ,LEARNER_EDIT],expires_at=int(row["expires_at"].timestamp()),resource=self.resource)
 
 
-def require_learner():
-    require_scope(LEARNER_READ)
+def require_learner(write=False):
+    require_scope(LEARNER_EDIT if write else LEARNER_READ)
     token = get_access_token()
     prefix, sep, uid = token.client_id.partition(":")
     if prefix != "learner" or not sep or not uid.isascii() or not uid.isdecimal():
