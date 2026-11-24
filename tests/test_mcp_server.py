@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 import unittest
@@ -146,7 +147,10 @@ class HTTPTests(unittest.TestCase):
         def invoke(name, args, token):
             result = self.call(name, args, token)
             self.assertFalse(result.get("isError", False), result)
-            return result["structuredContent"]
+            if "structuredContent" in result:
+                return result["structuredContent"]
+            self.assertEqual(result["content"][0]["type"], "text")
+            return json.loads(result["content"][0]["text"])
 
         draft = invoke("create_draft", {"draft_id": ident, "family_txt": SOURCE}, EDITOR)
         self.assertEqual(draft["status"], "draft")
