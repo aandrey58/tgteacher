@@ -294,6 +294,54 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         require_scope(EDIT)
         return await tts.attach_audio(draft_kind, draft_id, expected_revision, task_index, asset_id, expected_task_id)
 
+    @server.tool(annotations=paid)
+    async def generate_image(provider: str, model: str, prompt: str, max_cost_microusd: int = 0, confirm: bool = False, estimate_only: bool = True) -> dict[str, Any]:
+        """Estimate or generate one image with an explicitly configured model. Default is dry run; paid generation requires approval and a cost ceiling."""
+        from tgteacher_bot.db import image_repo
+        require_scope(READ if estimate_only else EDIT)
+        if not estimate_only and not confirm:
+            raise ValueError("Image generation requires explicit confirmation")
+        return await image_repo.generate_batch([{"provider": provider, "model": model, "prompt": prompt}], max_cost_microusd, estimate_only)
+
+    @server.tool(annotations=paid)
+    async def batch_generate_images(items: list[dict[str, str]], max_cost_microusd: int = 0, confirm: bool = False, estimate_only: bool = True) -> dict[str, Any]:
+        """Estimate or generate 1–10 images, reserving the entire cost atomically before paid requests."""
+        from tgteacher_bot.db import image_repo
+        require_scope(READ if estimate_only else EDIT)
+        if not estimate_only and not confirm:
+            raise ValueError("Image generation requires explicit confirmation")
+        return await image_repo.generate_batch(items, max_cost_microusd, estimate_only)
+
+    @server.tool(annotations=write)
+    async def attach_image(draft_kind: Literal["new", "edit"], draft_id: str, expected_revision: int, task_index: int, asset_id: str, expected_task_id: int | None = None) -> dict[str, Any]:
+        """Attach immutable generated image to a Stage 5 draft task; specify stable ID for existing tasks. Publish separately."""
+        from tgteacher_bot.db import media_repo
+        require_scope(EDIT)
+        return await media_repo.attach_image(draft_kind, draft_id, expected_revision, task_index, asset_id, expected_task_id)
+
+    @server.tool(annotations=read)
+    async def list_media(kind: Literal["all", "image", "audio"] = "all", limit: int = 30, offset: int = 0) -> dict[str, Any]:
+        """List generated audio/image metadata, configured image models and budget. No binary payloads."""
+        from tgteacher_bot.db import media_repo
+        require_scope(READ)
+        return await media_repo.list_media(kind, limit, offset)
+
+    @server.tool(annotations=read)
+    async def get_media(kind: Literal["image", "audio"], asset_id: str, limit: int = 30, offset: int = 0) -> dict[str, Any]:
+        """Inspect immutable media metadata, generation provenance and paginated published version links."""
+        from tgteacher_bot.db import media_repo
+        require_scope(READ)
+        return await media_repo.get_media(kind, asset_id, limit, offset)
+
+    @server.tool(annotations=write)
+    async def detach_media(kind: Literal["image", "audio"], draft_kind: Literal["new", "edit"], draft_id: str, expected_revision: int, task_index: int, confirm: bool, expected_task_id: int | None = None) -> dict[str, Any]:
+        """Detach media from a draft only. Asset and history are retained; publication is blocked until replacement or removal of the task."""
+        from tgteacher_bot.db import media_repo
+        require_scope(EDIT)
+        if not confirm:
+            raise ValueError("Detachment requires explicit confirmation")
+        return await media_repo.detach_media(kind, draft_kind, draft_id, expected_revision, task_index, expected_task_id)
+
     return server
 
 
