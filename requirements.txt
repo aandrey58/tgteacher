@@ -9,4 +9,8 @@ psutil
 yookassa>=3.0.0
 
 # Если используешь psutil для мониторинга (admin_status.py), раскомментируй:
-# psutil 
+# psutil
+
+# MCP server (v1 API)
+mcp>=1.26,<2
+uvicorn>=0.34
