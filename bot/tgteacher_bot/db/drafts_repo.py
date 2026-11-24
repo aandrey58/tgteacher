@@ -1,6 +1,7 @@
 """Durable, revisioned lesson drafts. Published catalog rows are immutable here."""
 import uuid
 from tgteacher_bot.db.pool import get_pool
+from tgteacher_bot.db.tts_repo import validate_audio_files
 from tgteacher_bot.db.families_repo import insert_family_on_connection
 from tgteacher_bot.utils.family_parser import parse_family_text
 from tgteacher_bot.utils.content_validation import validate_family, ContentValidationError, family_identity
@@ -51,7 +52,7 @@ def preview(source):
     media = bool(family.get("stage5_tasks") or family.get("stage7_tasks"))
     return {
         "valid": True, "publishable": not media,
-        "errors": ["Media attachment is not available until media integration"] if media else [],
+        "errors": ["Media must be verified against stored assets"] if media else [],
         "name": family["name"], "target": family["target"],
         "counts": {"1": len(family["words"]), **{str(i): len(family[f"stage{i}_tasks"]) for i in range(2, 9)}},
     }
@@ -124,6 +125,13 @@ async def validate_draft(draft_id):
         pool = await get_pool()
         async with pool.acquire() as conn:
             existing = await conn.fetch("SELECT name, target FROM families")
+            try:
+                await validate_audio_files(conn, parse_publishable(draft["family_txt"]))
+                report["errors"] = []
+                report["publishable"] = True
+            except ContentValidationError as exc:
+                report["errors"] = [str(exc)]
+                report["publishable"] = False
         identity = family_identity(report["name"], report["target"])
         if any(family_identity(row["name"], row["target"]) == identity for row in existing):
             report["errors"].append("A group with this name and access level already exists")
@@ -148,8 +156,7 @@ async def publish_draft(draft_id, expected_revision):
             if row["published_at"]:
                 return serialize(row, False)
             family = parse_publishable(row["family_txt"])
-            if family.get("stage5_tasks") or family.get("stage7_tasks"):
-                raise ContentValidationError("Publish text-only lessons until media integration is enabled")
+            await validate_audio_files(conn, family)
             family_id = await insert_family_on_connection(conn, family)
             row = await conn.fetchrow("""
                 UPDATE content_drafts SET published_at=now(), updated_at=now(), family_id=$2
