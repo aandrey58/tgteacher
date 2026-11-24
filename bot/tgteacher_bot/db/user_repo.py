@@ -267,6 +267,9 @@ async def init_db_pg():
             );
         ''')
 
+        from tgteacher_bot.db.drafts_repo import init_drafts
+        await init_drafts(conn)
+
 @track_db_errors
 async def set_task_done_pg(user_id: int, family_idx: int, stage_num: int, task_idx: int):
     pool = await get_pool()
