@@ -6,7 +6,7 @@ Reference: the approved light TGTeacher Admin designs, ten sidebar sections. Rea
 
 - Dashboard: real SQL counts and dated lesson activity.
 - Groups: search, paging, current content, create edit draft, archive/restore, version history and rollback.
-- Drafts: new TXT and edit JSON, revisioned save, validation, publish, soft delete.
+- Drafts: structured eight-stage editor with TXT/JSON fallback, revisioned save, validation, publish, soft delete; add/remove/reorder tasks and choose recent generated media.
 - Learners: Telegram ID/name lookup, personal progress and review statistics in an authenticated operator-only UI, VIP extension.
 - Reviews: active group vocabulary card counts, due and rated counts (not measured retention).
 - Media: generated images/audio, metadata, history, preview/playback.
@@ -26,7 +26,7 @@ Open http://127.0.0.1:8080. This is loopback-only. Remote access requires HTTPS 
 
 ## Phase 9.2 — feature parity before cutover
 
-Implement visual structured editor for all eight stages (add/edit/archive/reorder, task-level attachment/detachment, inline validation and version diff). Bring ZIP import/export, bulk operations, remaining legacy user/subscription/account actions, admin messaging/help workflows, reports and operational health to the web after inventorying actual Telegram admin handlers. Use actual measured analytics, explicitly distinguish forecast and self-assessment. Add per-administrator identity/roles and richer audit attribution; migrate settings safely rather than editing arbitrary environment secrets from the browser. Add authenticated media upload and attachment UI. No unsupported provider, fictitious stats, automated quality score or dummy success controls.
+Polish visual editor with inline validation, searchable full asset picker, dedicated detach action and version diff. Bring ZIP import/export, bulk operations, remaining legacy user/subscription/account actions, admin messaging/help workflows, reports and operational health to the web after inventorying actual Telegram admin handlers. Use actual measured analytics, explicitly distinguish forecast and self-assessment. Add per-administrator identity/roles and richer audit attribution; migrate settings safely rather than editing arbitrary environment secrets from the browser. Add authenticated media upload and attachment UI. No unsupported provider, fictitious stats, automated quality score or dummy success controls.
 
 ## Cutover
 
