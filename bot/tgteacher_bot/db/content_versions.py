@@ -172,7 +172,9 @@ async def _validate_candidate(conn, meta, old, content):
 def _draft(row):
     return {"draft_id": str(row["id"]), "family_id": row["family_id"],
             "base_version": row["base_version"], "revision": row["revision"],
-            "published_version": row["published_version"], "content": decode(row["content"])}
+            "published_version": row["published_version"],
+            "status": "deleted" if row.get("deleted_at") else "published" if row["published_version"] is not None else "draft",
+            "content": decode(row["content"])}
 
 
 async def create_edit_draft(family_id, draft_id, expected_version):
@@ -183,7 +185,7 @@ async def create_edit_draft(family_id, draft_id, expected_version):
             await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
             previous = await conn.fetchrow("SELECT * FROM family_edit_drafts WHERE id=$1", ident)
             if previous:
-                if previous["family_id"] != family_id or previous["base_version"] != expected_version:
+                if previous["deleted_at"] is not None or previous["family_id"] != family_id or previous["base_version"] != expected_version:
                     raise VersionConflict("Draft UUID already used")
                 return _draft(previous)
             meta, content = await read_content(conn, family_id)
@@ -204,7 +206,7 @@ async def list_edit_drafts(family_id=None, limit=30, offset=0):
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT id::text AS draft_id, family_id, base_version, revision, published_version, created_at::text
-            FROM family_edit_drafts WHERE ($1::integer IS NULL OR family_id=$1)
+            FROM family_edit_drafts WHERE deleted_at IS NULL AND ($1::integer IS NULL OR family_id=$1)
             ORDER BY created_at DESC,id LIMIT $2 OFFSET $3
         """, family_id, limit+1, offset)
         return {"items": [dict(row) for row in rows[:limit]], "next_offset": offset+limit if len(rows)>limit else None}
@@ -225,7 +227,7 @@ async def update_edit_draft(draft_id, expected_revision, content):
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
             UPDATE family_edit_drafts SET content=$3::jsonb, revision=revision+1
-            WHERE id=$1 AND revision=$2 AND published_version IS NULL RETURNING *
+            WHERE id=$1 AND revision=$2 AND published_version IS NULL AND deleted_at IS NULL RETURNING *
         """, uuid.UUID(draft_id), expected_revision, json.dumps(content, ensure_ascii=False))
         if not row:
             raise VersionConflict("Draft missing, published or revision changed")
@@ -238,7 +240,7 @@ async def preview_edit(draft_id):
     async with pool.acquire() as conn:
         async with conn.transaction(isolation="repeatable_read", readonly=True):
             meta, old = await read_content(conn, draft["family_id"])
-            if draft["published_version"] is not None or meta["content_version"] != draft["base_version"]:
+            if draft["status"] != "draft" or meta["content_version"] != draft["base_version"]:
                 raise VersionConflict("Draft published or based on stale version")
             candidate = clean_content(draft["content"])
             plan = await _validate_candidate(conn, meta, old, candidate)
@@ -357,7 +359,7 @@ async def publish_edit(draft_id, expected_revision):
         async with conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
             row = await conn.fetchrow("SELECT * FROM family_edit_drafts WHERE id=$1 FOR UPDATE", uuid.UUID(draft_id))
-            if not row or row["revision"] != expected_revision:
+            if not row or row["deleted_at"] is not None or row["revision"] != expected_revision:
                 raise VersionConflict("Draft missing or revision changed")
             if row["published_version"] is not None:
                 return {"family_id": row["family_id"], "content_version": row["published_version"], "restored_from": None}
@@ -404,3 +406,26 @@ async def rollback_family(family_id, version, expected_version):
             if any(family_identity(r["name"],r["target"]) == identity for r in rows):
                 raise DuplicateFamilyError("Historical name and access tier are already reserved")
             return await _apply(conn, meta, old, content, restored_from=version)
+
+
+async def delete_edit_draft(draft_id, expected_revision):
+    """Discard only an unpublished edit draft, never a family or version."""
+    ident = uuid.UUID(draft_id)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow("SELECT * FROM family_edit_drafts WHERE id=$1 FOR UPDATE", ident)
+            if not row or row["published_version"] is not None:
+                raise VersionConflict("Draft missing or already published")
+            if row["deleted_at"] is not None:
+                if row["revision"] != expected_revision + 1:
+                    raise VersionConflict("Draft revision changed")
+            else:
+                if row["revision"] != expected_revision:
+                    raise VersionConflict("Draft revision changed")
+                row = await conn.fetchrow("""
+                    UPDATE family_edit_drafts SET deleted_at=now(), revision=revision+1
+                    WHERE id=$1 RETURNING *
+                """, ident)
+            return {"draft_id": str(ident), "family_id": row["family_id"],
+                    "revision": row["revision"], "status": "deleted"}
