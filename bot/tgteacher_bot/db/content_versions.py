@@ -5,7 +5,7 @@ from pathlib import Path
 
 from tgteacher_bot.db.content_schema import STAGES, JSON_FIELDS, stage_key
 from tgteacher_bot.db.pool import get_pool
-from tgteacher_bot.db.tts_repo import validate_audio_files, record_audio_links
+from tgteacher_bot.db.media_repo import validate_media, record_media_links
 from tgteacher_bot.utils.content_validation import validate_family, family_identity, DuplicateFamilyError
 from tgteacher_bot.core.paths import families_dir
 
@@ -39,7 +39,7 @@ async def record_initial_version(conn, family_id):
         INSERT INTO family_versions(family_id, version, content) VALUES($1,$2,$3::jsonb)
         ON CONFLICT(family_id,version) DO NOTHING
     """, family_id, meta["content_version"], json.dumps(content, ensure_ascii=False))
-    await record_audio_links(conn, family_id, meta["content_version"], content)
+    await record_media_links(conn, family_id, meta["content_version"], content)
 
 
 async def get_current_content(family_id):
@@ -175,7 +175,7 @@ async def _validate_version_media(conn, meta, content):
         path = (root / folder).resolve()
         if path.parent != root:
             raise ValueError("Invalid media directory")
-    await validate_audio_files(conn, content, path)
+    await validate_media(conn, content, path)
 
 
 def _draft(row):
@@ -359,7 +359,7 @@ async def _apply(conn, meta, old, content, plan=None, restored_from=None):
     await conn.execute("""
         INSERT INTO family_versions(family_id,version,content,restored_from) VALUES($1,$2,$3::jsonb,$4)
     """, fid, version+1, json.dumps(snapshot, ensure_ascii=False), restored_from)
-    await record_audio_links(conn, fid, version+1, snapshot)
+    await record_media_links(conn, fid, version+1, snapshot)
     return {"family_id": fid, "content_version": version+1, "restored_from": restored_from}
 
 
