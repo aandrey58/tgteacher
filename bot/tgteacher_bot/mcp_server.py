@@ -30,7 +30,7 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
     origin = f"{parsed.scheme}://{parsed.netloc}"
     server = FastMCP(
         "TGTeacher",
-        instructions="Manage English lesson content. Drafts are not visible to learners. Validate the current revision before requesting approval to publish. Never publish without the user's explicit instruction.",
+        instructions="Manage English lesson content. Drafts are not visible to learners. Validate the current revision before requesting approval to publish. Never publish, archive or restore without the user's explicit instruction. Archived groups retain all learner progress.",
         stateless_http=True, json_response=True,
         token_verifier=verifier,
         auth=AuthSettings(issuer_url=issuer, resource_server_url=resource, required_scopes=[READ], validate_token_resource=True),
@@ -44,20 +44,27 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
     write = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 
     @server.tool(annotations=read)
-    async def list_families(limit: int = 30, offset: int = 0) -> dict[str, Any]:
-        """List published lesson groups with IDs and access tiers."""
+    async def list_families(limit: int = 30, offset: int = 0, status: str = 'active') -> dict[str, Any]:
+        """List published groups: status active, archived, or all."""
         require_scope(READ)
         _page(limit, offset)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch("SELECT id, name, description, target FROM families ORDER BY id DESC LIMIT $1 OFFSET $2", limit + 1, offset)
+            if status not in ("active", "archived", "all"):
+                raise ValueError("status must be active, archived or all")
+            rows = await conn.fetch("""
+                SELECT id, name, description, target, archived_at::text AS archived_at FROM families
+                WHERE $3='all' OR ($3='active' AND archived_at IS NULL)
+                    OR ($3='archived' AND archived_at IS NOT NULL)
+                ORDER BY id DESC LIMIT $1 OFFSET $2
+            """, limit + 1, offset, status)
         return {"items": [dict(row) for row in rows[:limit]], "next_offset": offset + limit if len(rows) > limit else None}
 
     @server.tool(annotations=read)
     async def get_family(family_id: int) -> dict[str, Any]:
         """Read one published group and all eight exercise sets."""
         require_scope(READ)
-        family = await families.get_family_data_pg(family_id)
+        family = await families.get_family_data_pg(family_id, include_archived=True)
         if not family:
             raise ValueError("Family not found")
         family.pop("folder_name", None)
@@ -67,7 +74,7 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         return family
 
     @server.tool(annotations=read)
-    async def search_words(query: str, limit: int = 30, offset: int = 0) -> dict[str, Any]:
+    async def search_words(query: str, limit: int = 30, offset: int = 0, include_archived: bool = False) -> dict[str, Any]:
         """Search existing English words and Russian translations by substring."""
         require_scope(READ)
         _page(limit, offset)
@@ -76,12 +83,12 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         pool = await get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT f.id AS family_id, f.name AS family_name, w.word, w.translation
+                SELECT f.id AS family_id, f.name AS family_name, w.word, w.translation, (f.archived_at IS NOT NULL) AS archived
                 FROM stage1_words w JOIN families f ON f.id=w.family_id
-                WHERE strpos(lower(w.word), lower($1)) > 0
-                   OR strpos(lower(coalesce(w.translation,'')), lower($1)) > 0
+                WHERE ($4::boolean OR f.archived_at IS NULL) AND (strpos(lower(w.word), lower($1)) > 0
+                   OR strpos(lower(coalesce(w.translation,'')), lower($1)) > 0)
                 ORDER BY lower(w.word), f.id, w.word_order LIMIT $2 OFFSET $3
-            """, query.strip(), limit + 1, offset)
+            """, query.strip(), limit + 1, offset, include_archived)
         return {"items": [dict(row) for row in rows[:limit]], "next_offset": offset + limit if len(rows) > limit else None}
 
     @server.tool(annotations=read)
@@ -129,6 +136,22 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         if not confirm:
             raise ValueError("Publication requires explicit confirmation")
         return await drafts.publish_draft(draft_id, expected_revision)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
+    async def archive_family(family_id: int, confirm: bool) -> dict[str, Any]:
+        """Remove a group from the learner catalog; preserve tasks, media and all progress."""
+        require_scope(PUBLISH)
+        if not confirm:
+            raise ValueError("Archiving requires explicit confirmation")
+        return await families.set_family_archived_pg(family_id, True)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+    async def restore_family(family_id: int, confirm: bool) -> dict[str, Any]:
+        """Restore the same archived group ID and all existing learner progress."""
+        require_scope(PUBLISH)
+        if not confirm:
+            raise ValueError("Restoration requires explicit confirmation")
+        return await families.set_family_archived_pg(family_id, False)
 
     return server
 
