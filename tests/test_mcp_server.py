@@ -107,6 +107,31 @@ class HTTPTests(unittest.TestCase):
             for name in ("get_learning_progress","get_learning_statistics","get_weak_words","get_due_reviews"):
                 self.assertTrue(self.call(name,{},token)["isError"])
 
+    def test_all_45_tools_deny_wrong_role_over_http(self):
+        from datetime import datetime, timezone, timedelta
+        from tgteacher_bot.db import srs_repo
+        learner = "tgtl_" + "a"*43
+        learner_row = {"user_id":111,"expires_at":datetime.now(timezone.utc)+timedelta(hours=1)}
+        names = self.rpc("tools/list").json()["result"]["tools"]
+        learner_tools = {"get_learning_progress","get_learning_statistics","get_weak_words","get_due_reviews","get_learner_profile","update_learning_preferences"}
+        def sample(schema):
+            if "anyOf" in schema:
+                return sample(next((s for s in schema["anyOf"] if s.get("type")!="null"),schema["anyOf"][0]))
+            if "enum" in schema:
+                return schema["enum"][0]
+            return {"string":"example","integer":1,"number":1,"boolean":True,"object":{},"array":[]}.get(schema.get("type"),None)
+        with patch.object(srs_repo,"verify_token",new=AsyncMock(return_value=learner_row)):
+            for tool in names:
+                name=tool["name"]
+                spec=tool["inputSchema"]
+                args={key:sample(spec["properties"][key]) for key in spec.get("required",[])}
+                with self.subTest(tool=name):
+                    self.assertEqual(self.rpc("tools/call",{"name":name,"arguments":args},token=None).status_code,401)
+                    denied = PUBLISHER if name in learner_tools else learner
+                    result=self.call(name,args,denied)
+                    self.assertTrue(result.get("isError"),result)
+                    self.assertIn("Insufficient permission",str(result))
+
     def test_permissions_and_confirmation(self):
         args = {"draft_id": str(uuid.uuid4()), "expected_revision": 1, "confirm": True}
         with patch.object(drafts, "publish_draft", new=AsyncMock(return_value={"status": "published"})) as publish:
