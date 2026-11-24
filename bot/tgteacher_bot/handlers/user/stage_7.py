@@ -1,4 +1,5 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, InputFile
+from telegram import InlineKeyboardButton, Update, InputFile
+from tgteacher_bot.core.learning_session import versioned_markup as InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from tgteacher_bot.db.families_repo import get_family_data_pg, get_stage7_tasks_pg, get_stage8_tasks_pg
 from tgteacher_bot.db.user_repo import (
