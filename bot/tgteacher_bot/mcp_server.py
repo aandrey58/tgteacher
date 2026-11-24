@@ -253,29 +253,32 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
     async def list_tts_providers() -> dict[str, Any]:
         """List configured providers, conservative byte-based rates and daily budget; no secrets."""
         require_scope(READ)
-        return tts.list_providers()
+        return await tts.discover_providers()
 
     @server.tool(annotations=read)
-    async def list_voices(provider: str) -> dict[str, Any]:
-        """List the administrator-configured voice allowlist for a provider."""
+    async def list_voices(provider: str, model: str | None = None) -> dict[str, Any]:
+        """Discover model voices or use administrator-configured voices; specify model when multiple exist."""
         require_scope(READ)
-        return tts.list_voices(provider)
+        return await tts.discover_voices(provider, model)
 
     @server.tool(annotations=read)
     async def estimate_tts_cost(items: list[dict[str, str]]) -> dict[str, Any]:
-        """Estimate incremental cost in integer micro-USD for 1–10 provider/voice/text requests; check cache and daily budget."""
+        """Estimate incremental cost in integer micro-USD for 1–10 provider/model/voice/text requests; check cache and daily budget."""
         require_scope(READ)
         return await tts.estimate(items)
 
     paid = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
     @server.tool(annotations=paid)
-    async def generate_audio(provider: str, voice: str, text: str, max_cost_microusd: int, confirm: bool) -> dict[str, Any]:
+    async def generate_audio(provider: str, voice: str, text: str, max_cost_microusd: int, confirm: bool, model: str | None = None) -> dict[str, Any]:
         """Generate or reuse one immutable MP3. Requires user approval and maximum approved cost in micro-USD. Failed/pending requests are not retried."""
         require_scope(EDIT)
         if not confirm:
             raise ValueError("Audio generation requires explicit confirmation")
-        return await tts.generate_batch([{"provider": provider, "voice": voice, "text": text}], max_cost_microusd)
+        item = {"provider": provider, "voice": voice, "text": text}
+        if model is not None:
+            item["model"] = model
+        return await tts.generate_batch([item], max_cost_microusd)
 
     @server.tool(annotations=paid)
     async def batch_generate_audio(items: list[dict[str, str]], max_cost_microusd: int, confirm: bool) -> dict[str, Any]:
