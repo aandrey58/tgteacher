@@ -11,7 +11,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bot"))
 from tgteacher_bot.db import tts_repo as tts, content_versions as versions, drafts_repo as drafts, families_repo as families, user_repo as users
-from tgteacher_bot.services.tts_providers import Provider, check_mp3, configured_providers
+from tgteacher_bot.services.tts_providers import Provider, check_mp3, configured_providers, discover_catalog, convert_mp3
 
 # Synthetic MPEG frame headers and padding for structural validation; no speech or external API.
 MP3 = (bytes.fromhex("fffb9064") + bytes(413)) * 8
@@ -39,6 +39,76 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[1].url.path, "/v1/text-to-speech/voice123")
         self.assertEqual(calls[1].url.params["output_format"], "mp3_44100_128")
         self.assertEqual(json.loads(calls[1].content)["text"], "ticket")
+
+    async def test_gateway_payloads(self):
+        import json
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(200, content=MP3)
+        real = httpx.AsyncClient
+        for name in ("openrouter", "kodikrouter", "timeweb"):
+            p = Provider(name, "vendor/model", ("en-US-Harper:MAI-Voice-2",), 20, "secret")
+            with patch("tgteacher_bot.services.tts_providers.httpx.AsyncClient",
+                       side_effect=lambda **kw: real(transport=httpx.MockTransport(handler), **kw)):
+                self.assertEqual(await p.synthesize("ticket", p.voices[0]), MP3)
+        self.assertEqual([str(r.url) for r in calls], [
+            "https://openrouter.ai/api/v1/audio/speech", "https://api.kodikrouter.ru/v1/audio/speech",
+            "https://api.timeweb.ai/v1/audio/speech"])
+        self.assertTrue(calls[1].headers["Idempotency-Key"])
+        for request in calls:
+            self.assertEqual(json.loads(request.content)["model"], "vendor/model")
+            self.assertEqual(json.loads(request.content)["response_format"], "mp3")
+
+    async def test_live_catalog_parsing(self):
+        calls = []
+        spec = {"voice": {"type": "enum", "values": ["Kore", "en-US-Harper:MAI-Voice-2"]},
+                "response_format": {"type": "enum", "values": ["pcm"]}}
+        def handler(request):
+            calls.append(request)
+            if request.url.host == "openrouter.ai":
+                return httpx.Response(200, json={"data": [{"id": "google/gemini-tts",
+                    "output_modalities": [{"type": "speech", "supported_parameters": spec}]}]})
+            return httpx.Response(200, json={"items": [{"id": "google/gemini-tts", "supported_parameters": spec}], "total": 1})
+        real = httpx.AsyncClient
+        with patch("tgteacher_bot.services.tts_providers.httpx.AsyncClient",
+                   side_effect=lambda **kw: real(transport=httpx.MockTransport(handler), **kw)):
+            for name in ("openrouter", "kodikrouter"):
+                rows = await discover_catalog(name)
+                self.assertEqual(rows[0]["voices"], spec["voice"]["values"])
+                self.assertEqual(rows[0]["formats"], ["pcm"])
+            self.assertEqual((await discover_catalog("timeweb"))[0]["source"], "documented")
+        self.assertEqual(calls[1].url.params["api_surfaces"], "speech")
+
+    async def test_real_pcm_and_wav_conversion(self):
+        import io
+        import wave
+        pcm = bytes(24000 * 2)
+        result = await convert_mp3(pcm, "pcm", 24000, 1)
+        self.assertEqual(check_mp3(result), result)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(24000)
+            audio.writeframes(pcm)
+        self.assertTrue(await convert_mp3(buf.getvalue(), "wav"))
+        with self.assertRaises(ValueError):
+            await convert_mp3(b"invalid", "pcm", 24000, 1)
+
+    def test_gateway_config_requires_tariff_and_pcm_profile(self):
+        import json
+        raw = {"openrouter": {"google/gemini-tts": {"microusd_per_byte": 20, "format": "pcm", "pcm_rate": 24000}}}
+        env = {"OPENROUTER_API_KEY": "secret", "TGTEACHER_TTS_GATEWAY_MODELS": json.dumps(raw)}
+        with patch.dict(os.environ, env, clear=True):
+            p = configured_providers()[("openrouter", "google/gemini-tts")]
+            self.assertEqual(p.source_format, "pcm")
+            self.assertEqual(p.voices, ())
+            self.assertNotIn("secret", repr(p))
+        del raw["openrouter"]["google/gemini-tts"]["pcm_rate"]
+        with patch.dict(os.environ, {**env, "TGTEACHER_TTS_GATEWAY_MODELS": json.dumps(raw)}, clear=True):
+            with self.assertRaises(ValueError):
+                configured_providers()
 
     def test_configuration_and_mp3(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -180,3 +250,19 @@ class TTSDatabaseTests(unittest.IsolatedAsyncioTestCase):
                       [{**ITEM, "text": "x"*2001}], [{**ITEM, "provider": "unknown"}]):
             with self.assertRaises(ValueError):
                 await tts.generate_batch(items, 1000)
+
+
+    async def test_model_selection_and_dynamic_voice(self):
+        profiles = {("openrouter", "vendor/a"): Provider("openrouter", "vendor/a", (), 10, "secret"),
+                    ("openrouter", "vendor/b"): Provider("openrouter", "vendor/b", ("alloy",), 20, "secret")}
+        item = {"provider": "openrouter", "voice": "alloy", "text": "ticket"}
+        with patch.object(tts, "configured_providers", return_value=profiles), patch.object(tts, "discover_catalog", new=AsyncMock(return_value=[
+                {"model": "vendor/a", "voices": ["alloy"], "formats": ["mp3"], "source": "live"}])):
+            with self.assertRaises(ValueError):
+                await tts.estimate([item])
+            self.assertEqual((await tts.estimate([{**item, "model": "vendor/a"}]))["estimated_microusd"], 60)
+            self.assertEqual((await tts.estimate([{**item, "model": "vendor/b"}]))["estimated_microusd"], 120)
+            with patch.object(Provider, "synthesize", new=AsyncMock(return_value=MP3)) as call:
+                result = await tts.generate_batch([{**item, "model": "vendor/a"}, {**item, "model": "vendor/b"}], 180)
+                self.assertNotEqual(result["items"][0]["cache_key"], result["items"][1]["cache_key"])
+                self.assertEqual(call.await_count, 2)
