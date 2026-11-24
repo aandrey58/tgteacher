@@ -5,7 +5,7 @@ from pathlib import Path
 
 def package_dir() -> Path:
     """Directory of `tgteacher_bot` package."""
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parent.parent
 
 
 def bot_dir() -> Path:
