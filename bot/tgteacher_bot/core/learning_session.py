@@ -63,9 +63,13 @@ class LearningApplication(Application):
                 if is_stage and not fid:
                     fid = await conn.fetchval("SELECT family_idx FROM user_current_family WHERE user_id=$1", user.id)
                 version = None
+                if (is_stage or is_text) and not fid:
+                    if query:
+                        await query.answer("Откройте группу заново.", show_alert=True)
+                    return
                 if fid and (family_match or is_stage or is_text):
-                    row = await conn.fetchrow("SELECT content_version, archived_at FROM families WHERE id=$1", fid)
-                    if row and row["archived_at"] is None:
+                    row = await conn.fetchrow("SELECT f.content_version, f.archived_at, (coalesce(f.target,\'VIP+FREE\') IN (\'FREE\',\'VIP+FREE\') OR EXISTS (SELECT 1 FROM users u WHERE u.user_id=$2 AND u.is_subscribed IS TRUE AND (u.subscription_until IS NULL OR u.subscription_until>now()))) AS accessible FROM families f WHERE f.id=$1", fid, user.id)
+                    if row and row["archived_at"] is None and row["accessible"]:
                         version = row["content_version"]
                     valid = version is not None
                     if is_stage:
