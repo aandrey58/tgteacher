@@ -212,6 +212,16 @@ def parse_family_txt(filepath: str) -> Dict[str, Any]:
     if not family['name']: raise ValueError('Не найден #FAMILY в файле')
     if not family['words']: raise ValueError('Нет ни одного слова в группе словы')
 
+    # A malformed cloze must not reach the database or learner.
+    for task in family['stage8_tasks']:
+        gaps = task['text'].count('___')
+        answers = task.get('answers', [])
+        if not gaps or gaps != len(answers) or any(not a.strip() for a in answers):
+            raise ValueError(
+                f"Этап 8: количество пропусков ({gaps}) должно совпадать "
+                f"с количеством непустых ответов ({len(answers)})"
+            )
+
     return family
 
 
