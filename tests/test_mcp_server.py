@@ -88,7 +88,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         result = self.rpc("tools/list").json()["result"]
         names = {tool["name"] for tool in result["tools"]}
-        self.assertEqual(len(names), 27)
+        self.assertEqual(len(names), 33)
         roadmap = (ROOT / "docs" / "MCP_V1_ROADMAP.md").read_text(encoding="utf-8")
         rows = re.findall(r"^\| \d+ \| `(\w+)` \| .*? \| (implemented|planned) \|", roadmap, re.M)
         self.assertEqual(len(rows), 45)
@@ -245,6 +245,26 @@ class HTTPTests(unittest.TestCase):
                 call.assert_not_awaited()
                 self.assertFalse(self.call(name, args, EDITOR).get("isError", False))
                 call.assert_awaited_once()
+
+    def test_tts_permissions_and_approval(self):
+        from tgteacher_bot.db import tts_repo as tts
+        item = {"provider": "openai", "voice": "alloy", "text": "Hello"}
+        for name, args in (
+            ("generate_audio", {**item, "max_cost_microusd": 100, "confirm": True}),
+            ("batch_generate_audio", {"items": [item], "max_cost_microusd": 100, "confirm": True}),
+        ):
+            with patch.object(tts, "generate_batch", new=AsyncMock(return_value={"items": []})) as generate:
+                self.assertTrue(self.call(name, args, READER)["isError"])
+                self.assertTrue(self.call(name, {**args, "confirm": False}, EDITOR)["isError"])
+                generate.assert_not_awaited()
+                self.assertFalse(self.call(name, args, EDITOR).get("isError", False))
+                generate.assert_awaited_once()
+        with patch.object(tts, "attach_audio", new=AsyncMock(return_value={"revision": 2})) as attach:
+            args = {"draft_kind": "edit", "draft_id": str(uuid.uuid4()), "expected_revision": 1, "task_index": 0, "asset_id": "a"*64}
+            self.assertTrue(self.call("attach_audio", args, READER)["isError"])
+            attach.assert_not_awaited()
+            self.assertFalse(self.call("attach_audio", args, EDITOR).get("isError", False))
+            attach.assert_awaited_once()
 
     def test_foreign_origin_rejected(self):
         self.assertNotEqual(self.rpc("tools/list", origin="https://evil.example").status_code, 200)
