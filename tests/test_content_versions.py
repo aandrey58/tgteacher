@@ -195,3 +195,59 @@ class VersionTests(unittest.IsolatedAsyncioTestCase):
         d["content"]["stage2_tasks"][0]["choices"][1] = "hat; cap"
         with self.assertRaises(ValueError):
             await versions.update_edit_draft(d["draft_id"], 1, d["content"])
+
+
+    async def test_rollback_restores_completed_version_without_new_completion(self):
+        uid, fid = 90, self.fid
+        for pos in range(3):
+            await users.set_task_done_pg(uid, fid, 1, pos)
+        await users.set_stage2_answer_pg(uid, fid, 0, "ticket", True)
+        await users.set_family_stage_done_pg(uid, fid, 1)
+        await users.set_family_stage_done_pg(uid, fid, 2)
+        await users.set_family_finished_pg(uid, fid)
+        d = await self.draft()
+        d["content"]["words"].append({"word": "pear", "translation": "груша"})
+        await versions.update_edit_draft(d["draft_id"], 1, d["content"])
+        await versions.publish_edit(d["draft_id"], 2)
+        async with self.pool.acquire() as conn:
+            self.assertEqual(await conn.fetchval("SELECT finished FROM user_family_progress WHERE user_id=$1 AND family_idx=$2", uid, fid), 0)
+        await versions.rollback_family(fid, 1, 2)
+        async with self.pool.acquire() as conn:
+            self.assertEqual(await conn.fetchval("SELECT finished FROM user_family_progress WHERE user_id=$1 AND family_idx=$2", uid, fid), 1)
+        self.assertEqual(await users.get_family_completion_count_pg(uid, fid), 1)
+
+    async def test_learning_dispatch_blocks_edit_and_rejects_stale_callback(self):
+        from telegram import CallbackQuery, Update, User
+        from telegram.ext import Application
+        from tgteacher_bot.core import learning_session as session
+        app = Application.builder().application_class(session.LearningApplication).token("123:TEST").build()
+        uid, fid = 321, self.fid
+        app._user_data[uid]["current_family_idx"] = fid
+
+        def callback():
+            return Update(1, callback_query=CallbackQuery(
+                id="query", from_user=User(uid, "Learner", False), chat_instance="chat", data=f"stage1_next~{fid}.1"))
+
+        d = await self.draft()
+        d["content"]["description"] = "Revision two"
+        await versions.update_edit_draft(d["draft_id"], 1, d["content"])
+        entered, release = asyncio.Event(), asyncio.Event()
+        seen = []
+        async def dispatch(_, update):
+            seen.append(update.callback_query.data)
+            entered.set()
+            await release.wait()
+        with patch.object(session, "get_pool", new=AsyncMock(return_value=self.pool)), patch.object(Application, "process_update", new=dispatch), patch.object(CallbackQuery, "answer", new=AsyncMock()) as answer:
+            learner = asyncio.create_task(app.process_update(callback()))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                publication = asyncio.create_task(versions.publish_edit(d["draft_id"], 2))
+                await asyncio.sleep(0.05)
+                self.assertFalse(publication.done())
+            finally:
+                release.set()
+                await learner
+            await asyncio.wait_for(publication, 3)
+            await app.process_update(callback())
+            answer.assert_awaited_once()
+            self.assertEqual(seen, ["stage1_next"])
