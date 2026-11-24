@@ -359,7 +359,7 @@ def _extract_family_zip(zip_path, staging):
             if not name:
                 raise FamilyArchiveError('Пустое имя файла в архиве')
             parts = name.rstrip('/').split('/')
-            if any(p in ('', '.', '..') or ':' in p or '\\x00' in p for p in parts):
+            if any(p in ('', '.', '..') or ':' in p or '\x00' in p for p in parts):
                 raise FamilyArchiveError('Небезопасный путь в архиве')
             if len(parts) < 2 and not name.endswith('/'):
                 raise FamilyArchiveError('Файлы должны находиться в папке группы')
@@ -427,7 +427,7 @@ def _extract_family_zip(zip_path, staging):
 
 async def validate_and_extract_family_zip_with_ux(update, context: ContextTypes.DEFAULT_TYPE):
     from tgteacher_bot.handlers.admin.admin_list import get_admin_ids
-    if not update.effective_user or update.effective_user.id not in get_admin_ids():
+    if not update.effective_user or str(update.effective_user.id) not in get_admin_ids():
         return
     if not context.user_data.get('waiting_for_family_zip'):
         return
@@ -447,13 +447,6 @@ async def validate_and_extract_family_zip_with_ux(update, context: ContextTypes.
             ])
         )
         return
-
-    family_name_from_zip = os.path.splitext(doc.file_name)[0]
-    # Убираем проверку на существование папки - теперь разрешаем дублирование названий
-    # target_dir = os.path.join(FAMILIES_DIR, family_name_from_zip)
-    # if os.path.exists(target_dir):
-    #     # ❌ Группа слов с таким именем уже существует. Переименуй архив.
-    #     return
 
     zip_path = os.path.join(FAMILIES_DIR, f'.upload-{uuid.uuid4().hex}.zip')
     file = await doc.get_file()
@@ -475,26 +468,10 @@ async def validate_and_extract_family_zip_with_ux(update, context: ContextTypes.
     try:
         parsed_family_data, extracted_folder_path = validate_and_extract_family_zip(zip_path)
         # Сохраняем спарсенные данные в БД; folder_name = имя извлечённой папки (после возможного переименования под имя из TXT)
-        try:
-            folder_name_for_db = os.path.basename(extracted_folder_path)
-            await save_family_to_pg(parsed_family_data, folder_name=folder_name_for_db)
-            committed = True
-        except Exception as e:
-            logging.error(f"Ошибка при сохранении группы слов в БД: {e}", exc_info=True)
-            # Убираем проверку на уникальность - теперь разрешаем дублирование названий
-            # if 'unique' in str(e).lower():
-            #     await update.message.reply_text(
-            #         '❌ Группа слов с таким именем уже существует! Переименуй архив или удалите старую группу слов.',
-            #         reply_markup=InlineKeyboardMarkup([
-            #             [InlineKeyboardButton('✅ Ок', callback_data='admin_file_exists_ok')]
-            #         ])
-            #     )
-            #     os.remove(zip_path)
-            #     if os.path.exists(extracted_folder_path):
-            #         shutil.rmtree(extracted_folder_path)
-            #     return
-            # else:
-            raise
+        folder_name_for_db = os.path.basename(extracted_folder_path)
+        await save_family_to_pg(parsed_family_data, folder_name=folder_name_for_db)
+        committed = True
+        context.user_data['waiting_for_family_zip'] = False
         # И обновляем кэш метаданных в памяти
         await families_data._load_initial_families_meta()
         await update.message.reply_text(
@@ -507,28 +484,22 @@ async def validate_and_extract_family_zip_with_ux(update, context: ContextTypes.
         if os.path.exists(zip_path):
             os.remove(zip_path)
         # shutil.rmtree(extracted_folder_path) # Удаляем извлеченную папку после сохранения в DB
-    except (FamilyArchiveError, ContentValidationError, ValueError) as e:
-        logging.error(f"Ошибка при разархивировании: {e}", exc_info=True)
+    except (FamilyArchiveError, ValueError) as e:
+        logging.warning("Invalid family import: %s", e)
         await update.message.reply_text(
-            f'❌ Ошибка при разархивировании: {e}',
+            f'❌ Группа не добавлена: {e}',
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton('⬅️ В меню', callback_data='admin_panel')]
             ])
         )
+    except Exception:
+        logging.exception("Family import failed")
+        message = ('Группа сохранена, но не удалось обновить меню. '
+                   'Не загружайте её повторно.' if committed else
+                   '❌ Не удалось добавить группу слов.')
+        await update.message.reply_text(message)
+    finally:
         if os.path.exists(zip_path):
             os.remove(zip_path)
-        try:
-            if not committed and 'extracted_folder_path' in locals() and extracted_folder_path and os.path.exists(extracted_folder_path):
-                shutil.rmtree(extracted_folder_path)
-        except Exception:
-            pass
-    except Exception as e:
-        logging.error(f"Неизвестная ошибка при обработке архива группы слов: {e}", exc_info=True)
-        await update.message.reply_text(f'❌ Неизвестная ошибка: {e}')
-        if os.path.exists(zip_path):
-            os.remove(zip_path)
-        try:
-            if not committed and 'extracted_folder_path' in locals() and extracted_folder_path and os.path.exists(extracted_folder_path):
-                shutil.rmtree(extracted_folder_path)
-        except Exception:
-            pass 
+        if not committed and 'extracted_folder_path' in locals():
+            shutil.rmtree(extracted_folder_path, ignore_errors=True)
