@@ -93,9 +93,11 @@ def get_main_menu(user_id=None):
         [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
     ]
     if user_id and str(user_id) in admin_ids:
-        buttons.append(
-            [InlineKeyboardButton("🛠️ Админ-панель", callback_data="admin_panel")]
-        )
+        web_url = os.getenv("TGTEACHER_WEB_ADMIN_URL", "")
+        if web_url.startswith("https://"):
+            buttons.append([InlineKeyboardButton("🛠️ Веб-админка", url=web_url)])
+        if os.getenv("TGTEACHER_LEGACY_ADMIN", "1") == "1":
+            buttons.append([InlineKeyboardButton("🛠️ Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -243,10 +245,11 @@ def _register_handlers(application: Application):
     register_settings_handlers(application)
     register_help_handlers(application)
     register_subscription_handlers(application)
-    guarded = AdminRegistration(application)
-    register_admin_handlers(guarded)
-    register_status_info_handlers(guarded)
-    register_admin_users_handlers(guarded)
+    if os.getenv("TGTEACHER_LEGACY_ADMIN", "1") == "1":
+        guarded = AdminRegistration(application)
+        register_admin_handlers(guarded)
+        register_status_info_handlers(guarded)
+        register_admin_users_handlers(guarded)
 
 
 async def _post_startup(application: Application):
