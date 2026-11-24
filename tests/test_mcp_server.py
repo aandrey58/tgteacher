@@ -3,6 +3,8 @@ import os
 import sys
 import unittest
 import uuid
+import time
+import httpx
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -10,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bot"))
 
 from starlette.testclient import TestClient
-from tgteacher_bot.mcp_auth import StaticTokenVerifier, READ, EDIT, PUBLISH
+from tgteacher_bot.mcp_auth import StaticTokenVerifier, IntrospectionTokenVerifier, READ, EDIT, PUBLISH
 from tgteacher_bot.mcp_server import build_server
 from tgteacher_bot.db import drafts_repo as drafts
 
@@ -33,6 +35,25 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
             StaticTokenVerifier(READER, READER, PUBLISHER)
         with self.assertRaises(ValueError):
             StaticTokenVerifier("", EDITOR, PUBLISHER)
+
+
+    async def test_external_oauth_audience_expiry_and_scopes(self):
+        resource = "https://teacher.example/mcp"
+        verifier = IntrospectionTokenVerifier("https://auth.example/introspect", "client", "secret", resource)
+        valid = {"active": True, "aud": [resource], "exp": int(time.time()) + 600,
+                 "scope": READ + " " + EDIT, "client_id": "test"}
+        cases = [(valid, True), ({**valid, "aud": ["https://other.example/mcp"]}, False),
+                 ({**valid, "exp": 1}, False), ({**valid, "active": False}, False),
+                 ({**valid, "scope": EDIT}, False)]
+        for data, allowed in cases:
+            with self.subTest(data=data):
+                response = httpx.Response(200, json=data, request=httpx.Request("POST", verifier.url))
+                with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response)):
+                    token = await verifier.verify_token("opaque-token")
+                self.assertEqual(token is not None, allowed)
+                if token:
+                    self.assertEqual(token.scopes, [READ, EDIT])
+                    self.assertEqual(str(token.resource), resource)
 
 
 class HTTPTests(unittest.TestCase):
@@ -86,6 +107,57 @@ class HTTPTests(unittest.TestCase):
             create.assert_not_awaited()
             self.assertFalse(self.call("create_draft", args, EDITOR).get("isError", False))
             create.assert_awaited_once()
+
+    @unittest.skipUnless(os.getenv("TGTEACHER_TEST_DSN"), "requires isolated PostgreSQL")
+    def test_http_publish_and_search_real_database(self):
+        import asyncpg
+        from tgteacher_bot.db import user_repo, families_repo
+        from tgteacher_bot import mcp_server
+        dsn = os.environ["TGTEACHER_TEST_DSN"]
+        schema = "test_" + uuid.uuid4().hex
+
+        async def setup():
+            admin = await asyncpg.connect(dsn)
+            try:
+                await admin.execute(f'CREATE SCHEMA "{schema}"')
+                pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4,
+                                                  server_settings={"search_path": schema})
+                return admin, pool
+            except BaseException:
+                await admin.close()
+                raise
+
+        admin, pool = self.client.portal.call(setup)
+
+        async def cleanup():
+            await pool.close()
+            try:
+                await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
+            finally:
+                await admin.close()
+
+        self.addCleanup(self.client.portal.call, cleanup)
+        for module in (user_repo, families_repo, drafts, mcp_server):
+            p = patch.object(module, "get_pool", new=AsyncMock(return_value=pool))
+            p.start()
+            self.addCleanup(p.stop)
+        self.client.portal.call(user_repo.init_db_pg)
+        ident = str(uuid.uuid4())
+        def invoke(name, args, token):
+            result = self.call(name, args, token)
+            self.assertFalse(result.get("isError", False), result)
+            return result["structuredContent"]
+
+        draft = invoke("create_draft", {"draft_id": ident, "family_txt": SOURCE}, EDITOR)
+        self.assertEqual(draft["status"], "draft")
+        self.assertEqual(invoke("list_families", {}, READER)["items"], [])
+        self.assertTrue(invoke("validate_draft", {"draft_id": ident}, READER)["publishable"])
+        published = invoke("publish_draft", {"draft_id": ident, "expected_revision": 1, "confirm": True}, PUBLISHER)
+        words = invoke("search_words", {"query": "ticket"}, READER)["items"]
+        self.assertEqual(words[0]["family_id"], published["family_id"])
+        family = invoke("get_family", {"family_id": published["family_id"]}, READER)
+        self.assertEqual(family["words"][0]["word"], "ticket")
+        self.assertEqual(len(invoke("list_families", {}, READER)["items"]), 1)
 
     def test_foreign_origin_rejected(self):
         self.assertNotEqual(self.rpc("tools/list", origin="https://evil.example").status_code, 200)
