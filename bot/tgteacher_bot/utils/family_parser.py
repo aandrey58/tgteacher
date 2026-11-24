@@ -168,6 +168,9 @@ def parse_family_text(text: str) -> Dict[str, Any]:
             if line.startswith('#TASK'):
                 if s7_current_task: family['stage7_tasks'].append(s7_current_task)
                 s7_current_task = {}
+                prompt = line.removeprefix('#TASK').strip()
+                if prompt:
+                    s7_current_task['task'] = prompt
             elif line.startswith('#AUDIO'):
                 s7_current_task['audio'] = line.replace('#AUDIO', '').strip()
             elif line.startswith('#ANSWER'):
