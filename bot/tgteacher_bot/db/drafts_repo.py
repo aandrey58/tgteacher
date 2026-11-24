@@ -1,7 +1,7 @@
 """Durable, revisioned lesson drafts. Published catalog rows are immutable here."""
 import uuid
 from tgteacher_bot.db.pool import get_pool
-from tgteacher_bot.db.tts_repo import validate_audio_files
+from tgteacher_bot.db.media_repo import validate_media
 from tgteacher_bot.db.families_repo import insert_family_on_connection
 from tgteacher_bot.utils.family_parser import parse_family_text
 from tgteacher_bot.utils.content_validation import validate_family, ContentValidationError, family_identity
@@ -126,7 +126,7 @@ async def validate_draft(draft_id):
         async with pool.acquire() as conn:
             existing = await conn.fetch("SELECT name, target FROM families")
             try:
-                await validate_audio_files(conn, parse_publishable(draft["family_txt"]))
+                await validate_media(conn, parse_publishable(draft["family_txt"]))
                 report["errors"] = []
                 report["publishable"] = True
             except ContentValidationError as exc:
@@ -156,7 +156,7 @@ async def publish_draft(draft_id, expected_revision):
             if row["published_at"]:
                 return serialize(row, False)
             family = parse_publishable(row["family_txt"])
-            await validate_audio_files(conn, family)
+            await validate_media(conn, family)
             family_id = await insert_family_on_connection(conn, family)
             row = await conn.fetchrow("""
                 UPDATE content_drafts SET published_at=now(), updated_at=now(), family_id=$2
