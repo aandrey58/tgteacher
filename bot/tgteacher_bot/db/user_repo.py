@@ -456,7 +456,8 @@ async def reset_family_progress_pg(user_id: int, family_idx: int):
         
         # Удаляем прогресс, но сохраняем запись с completion_count
         await conn.execute('''
-            DELETE FROM active_user_task_progress WHERE user_id = $1 AND family_idx = $2
+            DELETE FROM user_task_progress p WHERE user_id = $1 AND family_idx = $2
+            AND EXISTS (SELECT 1 FROM active_task_positions t WHERE t.family_idx=p.family_idx AND t.stage_num=p.stage_num AND t.task_id=p.task_id)
         ''', user_id, family_idx)
         await conn.execute('''
             DELETE FROM user_last_opened_family_place WHERE user_id = $1 AND family_idx = $2
@@ -1030,7 +1031,7 @@ async def delete_all_user_progress_for_family(family_idx: int):
         
         # Удаляем прогресс
         await conn.execute('DELETE FROM user_family_progress WHERE family_idx = $1', family_idx)
-        await conn.execute('DELETE FROM active_user_task_progress WHERE family_idx = $1', family_idx)
+        await conn.execute('DELETE FROM user_task_progress WHERE family_idx = $1', family_idx)
         await conn.execute('DELETE FROM user_last_opened_family_place WHERE family_idx = $1', family_idx)
         await conn.execute('DELETE FROM user_stage_state WHERE family_idx = $1', family_idx)
         await conn.execute('DELETE FROM user_current_family WHERE family_idx = $1', family_idx)
