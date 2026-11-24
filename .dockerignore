@@ -1,0 +1,13 @@
+**
+!Dockerfile
+!requirements.txt
+!bot/
+!bot/main.py
+!bot/tgteacher_bot/
+!bot/tgteacher_bot/**
+**/__pycache__
+**/*.pyc
+**/.env*
+**/*.env
+**/*.pem
+**/*.key
