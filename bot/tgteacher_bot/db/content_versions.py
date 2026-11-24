@@ -221,11 +221,12 @@ async def preview_edit(draft_id):
 
 async def _snapshot_learners(conn, fid, version):
     await conn.execute("""
-        INSERT INTO family_version_learner_history(family_id,version,user_id,progress,session_states,last_place)
+        INSERT INTO family_version_learner_history(family_id,version,user_id,progress,session_states,last_place,task_progress)
         SELECT $1,$2,u.user_id,
           (SELECT to_jsonb(p) FROM user_family_progress p WHERE p.family_idx=$1 AND p.user_id=u.user_id),
           (SELECT jsonb_agg(to_jsonb(s) ORDER BY s.stage_num) FROM user_stage_state s WHERE s.family_idx=$1 AND s.user_id=u.user_id),
-          (SELECT to_jsonb(l) FROM user_last_opened_family_place l WHERE l.family_idx=$1 AND l.user_id=u.user_id)
+          (SELECT to_jsonb(l) FROM user_last_opened_family_place l WHERE l.family_idx=$1 AND l.user_id=u.user_id),
+          (SELECT jsonb_agg(to_jsonb(a) ORDER BY a.stage_num,a.task_id) FROM user_task_progress a WHERE a.family_idx=$1 AND a.user_id=u.user_id)
         FROM (
             SELECT user_id FROM user_family_progress WHERE family_idx=$1
             UNION SELECT user_id FROM user_task_progress WHERE family_idx=$1
@@ -295,6 +296,9 @@ async def _apply(conn, meta, old, content, plan=None, restored_from=None):
                     AND a.stage_num=t.stage_num AND a.task_id=t.task_id AND a.is_done=1)), 1)
             WHERE family_idx=$1
         """, fid)
+    else:
+        # Metadata-only edits do not invalidate shuffled positions. Re-stamp stored sessions.
+        await conn.execute("UPDATE user_stage_state SET state=jsonb_set(state, '{content_version}', to_jsonb($2::integer), true) WHERE family_idx=$1 AND state IS NOT NULL", fid, version+1)
     _, snapshot = await read_content(conn, fid)
     await conn.execute("""
         INSERT INTO family_versions(family_id,version,content,restored_from) VALUES($1,$2,$3::jsonb,$4)
