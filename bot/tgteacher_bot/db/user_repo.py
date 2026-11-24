@@ -15,263 +15,265 @@ MAX_USER_DATA_SIZE = 1000  # Максимальное количество по�
 async def init_db_pg():
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_family_progress (
-                user_id BIGINT NOT NULL,
-                family_idx INTEGER NOT NULL,
-                stage1_done INTEGER DEFAULT 0,
-                stage2_done INTEGER DEFAULT 0,
-                stage3_done INTEGER DEFAULT 0,
-                stage6_done INTEGER DEFAULT 0,
-                stage8_done INTEGER DEFAULT 0,
-                finished INTEGER DEFAULT 0,
-                completion_count INTEGER DEFAULT 0,
-                PRIMARY KEY (user_id, family_idx)
-            );
-        ''')
-        await conn.execute('''
-            ALTER TABLE user_family_progress
-            ADD COLUMN IF NOT EXISTS stage4_done INTEGER DEFAULT 0
-        ''')
-        # NEW: ensure stage5_done exists
-        await conn.execute('''
-            ALTER TABLE user_family_progress
-            ADD COLUMN IF NOT EXISTS stage5_done INTEGER DEFAULT 0
-        ''')
-        # NEW: ensure stage7_done exists
-        await conn.execute('''
-            ALTER TABLE user_family_progress
-            ADD COLUMN IF NOT EXISTS stage7_done INTEGER DEFAULT 0
-        ''')
-        # NEW: ensure completion_count exists
-        await conn.execute('''
-            ALTER TABLE user_family_progress
-            ADD COLUMN IF NOT EXISTS completion_count INTEGER DEFAULT 0
-        ''')
-        await conn.execute('''
-            ALTER TABLE user_family_progress
-            ADD COLUMN IF NOT EXISTS first_opened_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_task_progress (
-                user_id BIGINT NOT NULL,
-                family_idx INTEGER NOT NULL,
-                stage_num INTEGER NOT NULL,
-                task_idx INTEGER NOT NULL,
-                is_done INTEGER DEFAULT 0,
-                selected_choice_text TEXT,
-                is_correct INTEGER,
-                PRIMARY KEY (user_id, family_idx, stage_num, task_idx)
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_last_opened_family_place (
-                user_id BIGINT NOT NULL,
-                family_idx INTEGER NOT NULL,
-                stage_num INTEGER NOT NULL,
-                task_idx INTEGER NOT NULL,
-                PRIMARY KEY (user_id, family_idx)
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_stage_state (
-                user_id BIGINT NOT NULL,
-                family_idx INTEGER NOT NULL,
-                stage_num INTEGER NOT NULL,
-                state JSONB,
-                last_activity_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                PRIMARY KEY (user_id, family_idx, stage_num)
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_current_family (
-                user_id BIGINT NOT NULL,
-                family_idx INTEGER NOT NULL,
-                PRIMARY KEY (user_id)
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS families (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                folder_name TEXT,
-                target TEXT
-            );
-        ''')
-        await conn.execute("ALTER TABLE families ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ")
-        # Удаляем ограничение UNIQUE с поля name, если оно существует
-        await conn.execute('''
-            ALTER TABLE families DROP CONSTRAINT IF EXISTS families_name_key
-        ''')
-        await conn.execute('''
-            ALTER TABLE families
-            ADD COLUMN IF NOT EXISTS target TEXT
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage1_words (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                word_order INTEGER NOT NULL,
-                word TEXT NOT NULL,
-                translation TEXT,
-                example TEXT,
-                example_translation TEXT,
-                hint TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage2_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                sentence TEXT NOT NULL,
-                answer TEXT NOT NULL,
-                choices JSONB,
-                explanation TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage3_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                word TEXT NOT NULL,
-                definition TEXT NOT NULL,
-                explanation TEXT,
-                choices JSONB,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage4_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                sentence TEXT NOT NULL,
-                answer TEXT NOT NULL,
-                choices JSONB,
-                explanation TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage5_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                image TEXT,
-                answer TEXT NOT NULL,
-                alternatives JSONB,
-                explanation TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage6_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                word TEXT NOT NULL,
-                synonyms JSONB,
-                wrong_synonyms JSONB,
-                explanation TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage7_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                task TEXT,
-                audio TEXT,
-                answer TEXT NOT NULL,
-                choices JSONB,
-                explanation TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage8_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                text TEXT NOT NULL,
-                answers JSONB,
-                explanations JSONB,
-                equal TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                registered_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                is_subscribed BOOLEAN DEFAULT FALSE,
-                subscription_count INTEGER DEFAULT 0,
-                last_active_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        ''')
-        # Добавляем столбец для даты окончания подписки, если его нет
-        await conn.execute('''
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS subscription_until TIMESTAMPTZ
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_user_task_progress_user_family_stage ON user_task_progress (user_id, family_idx, stage_num);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_user_last_opened_family_place_user_family ON user_last_opened_family_place (user_id, family_idx);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_user_stage_state_user_family_stage ON user_stage_state (user_id, family_idx, stage_num);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage1_words_family_id ON stage1_words (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage2_tasks_family_id ON stage2_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage3_tasks_family_id ON stage3_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage4_tasks_family_id ON stage4_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage5_tasks_family_id ON stage5_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage6_tasks_family_id ON stage6_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage7_tasks_family_id ON stage7_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage8_tasks_family_id ON stage8_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_user_current_family_user_id ON user_current_family (user_id);
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS payment_options (
-                id SERIAL PRIMARY KEY,
-                months INTEGER NOT NULL UNIQUE,
-                amount INTEGER NOT NULL,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        ''')
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_family_progress (
+                    user_id BIGINT NOT NULL,
+                    family_idx INTEGER NOT NULL,
+                    stage1_done INTEGER DEFAULT 0,
+                    stage2_done INTEGER DEFAULT 0,
+                    stage3_done INTEGER DEFAULT 0,
+                    stage6_done INTEGER DEFAULT 0,
+                    stage8_done INTEGER DEFAULT 0,
+                    finished INTEGER DEFAULT 0,
+                    completion_count INTEGER DEFAULT 0,
+                    PRIMARY KEY (user_id, family_idx)
+                );
+            ''')
+            await conn.execute('''
+                ALTER TABLE user_family_progress
+                ADD COLUMN IF NOT EXISTS stage4_done INTEGER DEFAULT 0
+            ''')
+            # NEW: ensure stage5_done exists
+            await conn.execute('''
+                ALTER TABLE user_family_progress
+                ADD COLUMN IF NOT EXISTS stage5_done INTEGER DEFAULT 0
+            ''')
+            # NEW: ensure stage7_done exists
+            await conn.execute('''
+                ALTER TABLE user_family_progress
+                ADD COLUMN IF NOT EXISTS stage7_done INTEGER DEFAULT 0
+            ''')
+            # NEW: ensure completion_count exists
+            await conn.execute('''
+                ALTER TABLE user_family_progress
+                ADD COLUMN IF NOT EXISTS completion_count INTEGER DEFAULT 0
+            ''')
+            await conn.execute('''
+                ALTER TABLE user_family_progress
+                ADD COLUMN IF NOT EXISTS first_opened_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_task_progress (
+                    user_id BIGINT NOT NULL,
+                    family_idx INTEGER NOT NULL,
+                    stage_num INTEGER NOT NULL,
+                    task_idx INTEGER NOT NULL,
+                    is_done INTEGER DEFAULT 0,
+                    selected_choice_text TEXT,
+                    is_correct INTEGER,
+                    PRIMARY KEY (user_id, family_idx, stage_num, task_idx)
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_last_opened_family_place (
+                    user_id BIGINT NOT NULL,
+                    family_idx INTEGER NOT NULL,
+                    stage_num INTEGER NOT NULL,
+                    task_idx INTEGER NOT NULL,
+                    PRIMARY KEY (user_id, family_idx)
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_stage_state (
+                    user_id BIGINT NOT NULL,
+                    family_idx INTEGER NOT NULL,
+                    stage_num INTEGER NOT NULL,
+                    state JSONB,
+                    last_activity_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    PRIMARY KEY (user_id, family_idx, stage_num)
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_current_family (
+                    user_id BIGINT NOT NULL,
+                    family_idx INTEGER NOT NULL,
+                    PRIMARY KEY (user_id)
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS families (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    folder_name TEXT,
+                    target TEXT
+                );
+            ''')
+            await conn.execute("ALTER TABLE families ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ")
+            # Удаляем ограничение UNIQUE с поля name, если оно существует
+            await conn.execute('''
+                ALTER TABLE families DROP CONSTRAINT IF EXISTS families_name_key
+            ''')
+            await conn.execute('''
+                ALTER TABLE families
+                ADD COLUMN IF NOT EXISTS target TEXT
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage1_words (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    word_order INTEGER NOT NULL,
+                    word TEXT NOT NULL,
+                    translation TEXT,
+                    example TEXT,
+                    example_translation TEXT,
+                    hint TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage2_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    sentence TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    choices JSONB,
+                    explanation TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage3_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    word TEXT NOT NULL,
+                    definition TEXT NOT NULL,
+                    explanation TEXT,
+                    choices JSONB,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage4_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    sentence TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    choices JSONB,
+                    explanation TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage5_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    image TEXT,
+                    answer TEXT NOT NULL,
+                    alternatives JSONB,
+                    explanation TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage6_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    word TEXT NOT NULL,
+                    synonyms JSONB,
+                    wrong_synonyms JSONB,
+                    explanation TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage7_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    task TEXT,
+                    audio TEXT,
+                    answer TEXT NOT NULL,
+                    choices JSONB,
+                    explanation TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage8_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    answers JSONB,
+                    explanations JSONB,
+                    equal TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    registered_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    is_subscribed BOOLEAN DEFAULT FALSE,
+                    subscription_count INTEGER DEFAULT 0,
+                    last_active_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+            ''')
+            # Добавляем столбец для даты окончания подписки, если его нет
+            await conn.execute('''
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS subscription_until TIMESTAMPTZ
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_task_progress_user_family_stage ON user_task_progress (user_id, family_idx, stage_num);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_last_opened_family_place_user_family ON user_last_opened_family_place (user_id, family_idx);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_stage_state_user_family_stage ON user_stage_state (user_id, family_idx, stage_num);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage1_words_family_id ON stage1_words (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage2_tasks_family_id ON stage2_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage3_tasks_family_id ON stage3_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage4_tasks_family_id ON stage4_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage5_tasks_family_id ON stage5_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage6_tasks_family_id ON stage6_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage7_tasks_family_id ON stage7_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage8_tasks_family_id ON stage8_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_current_family_user_id ON user_current_family (user_id);
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS payment_options (
+                    id SERIAL PRIMARY KEY,
+                    months INTEGER NOT NULL UNIQUE,
+                    amount INTEGER NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+            ''')
 
-        from tgteacher_bot.db.drafts_repo import init_drafts
-        await init_drafts(conn)
-        from tgteacher_bot.db.content_schema import migrate_content
-        await migrate_content(conn)
+            from tgteacher_bot.db.drafts_repo import init_drafts
+            await init_drafts(conn)
+            from tgteacher_bot.db.content_schema import migrate_content
+            await migrate_content(conn)
 
 @track_db_errors
 async def set_task_done_pg(user_id: int, family_idx: int, stage_num: int, task_idx: int):
