@@ -5,7 +5,7 @@ import json
 import re
 
 from tgteacher_bot.db.pool import get_pool
-from tgteacher_bot.services.tts_providers import configured_providers, daily_limit, check_mp3, MAX_TEXT_BYTES
+from tgteacher_bot.services.tts_providers import configured_providers, daily_limit, check_mp3, MAX_TEXT_BYTES, discover_catalog, GATEWAYS, KEYS
 
 MANAGED = re.compile(r"tts-([0-9a-f]{64})\.mp3\Z")
 MAX_BATCH = 10
@@ -89,37 +89,88 @@ async def validate_audio_files(conn, content, legacy_directory=None):
 
 def list_providers():
     return {"providers": [{"provider": p.name, "model": p.model, "voices": len(p.voices),
-                           "rate_microusd_per_utf8_byte": p.rate_microusd_per_byte}
+                           "rate_microusd_per_utf8_byte": p.rate_microusd_per_byte, "source_format": p.source_format}
                           for p in configured_providers().values()],
             "daily_limit_microusd": daily_limit(), "max_batch": MAX_BATCH, "max_text_bytes": MAX_TEXT_BYTES}
 
 
-def list_voices(provider):
-    p = configured_providers().get(provider)
-    if not p:
-        raise ValueError("Provider is not configured")
+def _select(providers, provider, model=None):
+    matches = [p for p in providers.values() if p.name == provider and (model is None or p.model == model)]
+    if len(matches) != 1:
+        raise ValueError("Select one explicitly configured provider and model")
+    return matches[0]
+
+
+def list_voices(provider, model=None):
+    p = _select(configured_providers(), provider, model)
     return {"provider": provider, "model": p.model, "voices": list(p.voices)}
 
 
-def _prepare(items):
+async def discover_providers():
+    import os
+    result = list_providers()
+    enabled = {(p["provider"], p["model"]) for p in result["providers"]}
+    catalogs = []
+    for name in GATEWAYS:
+        if not os.getenv(KEYS[name], "").strip():
+            continue
+        try:
+            rows = await discover_catalog(name)
+            catalogs.append({"provider": name, "models": [{**r, "generation_configured": (name, r["model"]) in enabled} for r in rows]})
+        except Exception:
+            catalogs.append({"provider": name, "error": "Catalog unavailable; configured profiles remain listed"})
+    return {**result, "catalogs": catalogs}
+
+
+async def discover_voices(provider, model=None):
+    profiles = [p for p in configured_providers().values() if p.name == provider and (model is None or p.model == model)]
+    if provider in GATEWAYS:
+        if model is None and len(profiles) == 1:
+            model = profiles[0].model
+        if model is None:
+            raise ValueError("Specify a model")
+        try:
+            row = next((r for r in await discover_catalog(provider) if r["model"] == model), None)
+        except Exception:
+            row = None
+        if row and row["voices"]:
+            if profiles and profiles[0].voices:
+                row = {**row, "voices": [v for v in row["voices"] if v in profiles[0].voices]}
+            return {"provider": provider, **row, "generation_configured": bool(profiles)}
+    return list_voices(provider, model)
+
+
+async def _prepare(items):
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_BATCH:
         raise ValueError("Supply 1–10 audio requests")
     providers = configured_providers()
     prepared = []
     for item in items:
-        if not isinstance(item, dict) or set(item) != {"provider", "voice", "text"}:
+        if not isinstance(item, dict) or not {"provider", "voice", "text"} <= set(item) or set(item) - {"provider", "voice", "text", "model"}:
             raise ValueError("Each request needs provider, voice and text")
         provider, voice, text = item["provider"], item["voice"], item["text"]
         if not all(isinstance(v, str) for v in (provider, voice, text)):
             raise ValueError("Provider, voice and text must be strings")
-        p = providers.get(provider)
-        if p is None or voice not in p.voices:
-            raise ValueError("Provider or voice is not configured")
+        model = item.get("model")
+        if model is not None and not isinstance(model, str):
+            raise ValueError("Model must be a string")
+        p = _select(providers, provider, model)
+        if p.voices:
+            voices = p.voices
+        elif provider in GATEWAYS:
+            row = next((r for r in await discover_catalog(provider) if r["model"] == p.model), None)
+            if not row or (row["formats"] and p.source_format not in row["formats"]):
+                raise ValueError("Model or output format unavailable")
+            voices = row["voices"]
+        else:
+            voices = ()
+        if voice not in voices:
+            raise ValueError("Voice is not available or configured")
         text = text.strip()
         size = len(text.encode("utf-8"))
         if not 1 <= size <= MAX_TEXT_BYTES or any(ord(c) < 32 and c not in "\n\t" for c in text):
             raise ValueError("Text must contain 1–2000 UTF-8 bytes without control characters")
-        key = hashlib.sha256(json.dumps(["tts-v1", p.name, p.model, voice, text, "mp3"], ensure_ascii=False).encode()).hexdigest()
+        key = hashlib.sha256(json.dumps(["tts-v1", p.name, p.model, voice, text, "mp3"] if p.source_format == "mp3" else ["tts-v2", p.name, p.model, voice, text, p.source_format, p.pcm_rate, p.pcm_channels, "mp3"], ensure_ascii=False).encode()).hexdigest()
         prepared.append((key, p, voice, text, size * p.rate_microusd_per_byte))
     return prepared
 
@@ -141,7 +192,7 @@ def _cost(prepared, existing):
 
 
 async def estimate(items):
-    prepared = _prepare(items)
+    prepared = await _prepare(items)
     pool = await get_pool()
     async with pool.acquire() as conn:
         existing = await _existing(conn, prepared)
@@ -162,7 +213,7 @@ def _result(key, row, cached):
 
 
 async def generate_batch(items, max_cost_microusd):
-    prepared = _prepare(items)
+    prepared = await _prepare(items)
     if type(max_cost_microusd) is not int or not 0 <= max_cost_microusd <= 1000000000:
         raise ValueError("Invalid maximum approved cost")
     pool = await get_pool()
@@ -191,7 +242,7 @@ async def generate_batch(items, max_cost_microusd):
             return key, _result(key, existing[key], True)
         async with semaphore:
             try:
-                async with asyncio.timeout(60):
+                async with asyncio.timeout(125):
                     data = check_mp3(await p.synthesize(text, voice))
                 ident = hashlib.sha256(data).hexdigest()
                 async with pool.acquire() as conn:
