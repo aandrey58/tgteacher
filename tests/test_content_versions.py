@@ -68,7 +68,6 @@ class VersionTests(unittest.IsolatedAsyncioTestCase):
         await users.set_task_done_pg(uid, fid, 1, 0)
         await users.set_task_done_pg(uid, fid, 1, 1)
         await users.set_stage2_answer_pg(uid, fid, 0, "ticket", True)
-        await users.increment_family_completion_count_pg(uid, fid)
         await users.set_family_finished_pg(uid, fid)
         await users.set_user_stage_state_pg(uid, fid, 1, {"tasks_order": [2, 0, 1]})
         await users.set_last_opened_family_place_pg(uid, fid, 1, 1)
@@ -100,6 +99,7 @@ class VersionTests(unittest.IsolatedAsyncioTestCase):
         async with self.pool.acquire() as conn:
             self.assertEqual(await conn.fetchval("SELECT count(*) FROM user_task_progress WHERE family_idx=$1", fid), 3)
             self.assertEqual(await conn.fetchval("SELECT count(*) FROM family_version_learner_history WHERE family_id=$1", fid), 1)
+            self.assertEqual(await conn.fetchval("SELECT jsonb_array_length(task_progress) FROM family_version_learner_history WHERE family_id=$1 AND version=1", fid), 3)
             self.assertTrue(await conn.fetchval("SELECT archived_at IS NOT NULL FROM stage1_words WHERE id=$1", apple["task_id"]))
         await users.set_task_done_pg(uid, fid, 1, 2)
         restored = await versions.rollback_family(fid, 1, 2)
