@@ -1,4 +1,5 @@
 import asyncio
+import re
 import json
 import os
 import sys
@@ -87,7 +88,12 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         result = self.rpc("tools/list").json()["result"]
         names = {tool["name"] for tool in result["tools"]}
-        self.assertEqual(len(names), 21)
+        self.assertEqual(len(names), 27)
+        roadmap = (ROOT / "docs" / "MCP_V1_ROADMAP.md").read_text(encoding="utf-8")
+        rows = re.findall(r"^\| \d+ \| `(\w+)` \| .*? \| (implemented|planned) \|", roadmap, re.M)
+        self.assertEqual(len(rows), 45)
+        self.assertEqual(len({name for name, _ in rows}), 45)
+        self.assertEqual(names, {name for name, status in rows if status == "implemented"})
         self.assertIn("publish_draft", names)
         self.assertIn("archive_family", names)
         self.assertIn("restore_family", names)
@@ -200,7 +206,45 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(len(invoke("list_family_versions", {"family_id": published["family_id"]}, READER)["items"]), 2)
         restored = invoke("rollback_family", {"family_id": published["family_id"], "version": 1, "expected_version": 2, "confirm": True}, PUBLISHER)
         self.assertEqual(restored["content_version"], 3)
+        new_id = str(uuid.uuid4())
+        invoke("create_draft", {"draft_id": new_id, "family_txt": SOURCE.replace("MCP travel", "MCP new draft")}, EDITOR)
+        args = {"draft_id": new_id, "draft_kind": "new", "stage": 1, "expected_revision": 1}
+        added = invoke("add_tasks", {**args, "tasks": [{"word": "hat", "translation": "шляпа"}]}, EDITOR)
+        self.assertEqual(added["task_count"], 2)
+        self.assertEqual(invoke("delete_draft", {"draft_id": new_id, "expected_revision": 2, "confirm": True}, EDITOR)["status"], "deleted")
+        fresh_edit = str(uuid.uuid4())
+        invoke("create_edit_draft", {"family_id": published["family_id"], "draft_id": fresh_edit, "expected_version": 3}, EDITOR)
+        args = {"draft_id": fresh_edit, "draft_kind": "edit", "stage": 1}
+        added = invoke("add_tasks", {**args, "expected_revision": 1, "tasks": [{"word": "hat", "translation": "шляпа"}]}, EDITOR)
+        self.assertEqual(added["task_count"], 2)
+        invoke("update_task", {**args, "expected_revision": 2, "task_index": 1, "patch": {"translation": "головной убор"}}, EDITOR)
+        invoke("reorder_tasks", {**args, "expected_revision": 3, "order": [1, 0]}, EDITOR)
+        invoke("archive_task", {**args, "expected_revision": 4, "task_index": 1, "confirm": True}, EDITOR)
+        self.assertEqual(invoke("delete_edit_draft", {"draft_id": fresh_edit, "expected_revision": 5, "confirm": True}, EDITOR)["status"], "deleted")
+        self.assertEqual(invoke("get_family", {"family_id": published["family_id"]}, READER)["words"][0]["word"], "ticket")
 
+
+
+    def test_granular_tools_permissions(self):
+        from tgteacher_bot.db import content_operations as ops, content_versions as versions
+        base = {"draft_id": str(uuid.uuid4()), "expected_revision": 1}
+        common = {**base, "draft_kind": "edit", "stage": 1}
+        cases = [
+            (drafts, "delete_draft", {**base, "confirm": True}),
+            (versions, "delete_edit_draft", {**base, "confirm": True}),
+            (ops, "add_tasks", {**common, "tasks": [{"word": "apple", "translation": "яблоко"}]}),
+            (ops, "update_task", {**common, "task_index": 0, "patch": {"translation": "билет"}}),
+            (ops, "archive_task", {**common, "task_index": 0, "confirm": True}),
+            (ops, "reorder_tasks", {**common, "order": [0]}),
+        ]
+        for module, name, args in cases:
+            with self.subTest(tool=name), patch.object(module, name, new=AsyncMock(return_value={"revision": 2})) as call:
+                self.assertTrue(self.call(name, args, READER)["isError"])
+                if "confirm" in args:
+                    self.assertTrue(self.call(name, {**args, "confirm": False}, EDITOR)["isError"])
+                call.assert_not_awaited()
+                self.assertFalse(self.call(name, args, EDITOR).get("isError", False))
+                call.assert_awaited_once()
 
     def test_foreign_origin_rejected(self):
         self.assertNotEqual(self.rpc("tools/list", origin="https://evil.example").status_code, 200)
