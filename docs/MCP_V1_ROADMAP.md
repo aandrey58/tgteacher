@@ -1,6 +1,6 @@
 # TGTeacher MCP v1.0 — approved roadmap
 
-Target: **45 distinct MCP tools**. Stage 4 establishes 33 implemented tools; the remaining 12 are planned, not exposed as placeholders.
+Target: **45 distinct MCP tools**. Stage 5 establishes 39 implemented tools; the remaining 6 are planned, not exposed as placeholders.
 
 | # | Tool | Stage | Status | Purpose |
 |---:|---|---|---|---|
@@ -37,12 +37,12 @@ Target: **45 distinct MCP tools**. Stage 4 establishes 33 implemented tools; the
 | 31 | `generate_audio` | Stage 4 — TTS | implemented | Generate one audio asset |
 | 32 | `batch_generate_audio` | Stage 4 — TTS | implemented | Generate bounded batch |
 | 33 | `attach_audio` | Stage 4 — TTS | implemented | Attach existing audio to draft task |
-| 34 | `generate_image` | Stage 5 — Images | planned | Generate one image asset |
-| 35 | `batch_generate_images` | Stage 5 — Images | planned | Generate bounded batch |
-| 36 | `attach_image` | Stage 5 — Images | planned | Attach image to draft task |
-| 37 | `list_media` | Stage 5 — Images | planned | List accessible assets |
-| 38 | `get_media` | Stage 5 — Images | planned | Read asset metadata |
-| 39 | `detach_media` | Stage 5 — Images | planned | Remove draft attachment without deleting history |
+| 34 | `generate_image` | Stage 5 — Images | implemented | Generate one image asset |
+| 35 | `batch_generate_images` | Stage 5 — Images | implemented | Generate bounded batch |
+| 36 | `attach_image` | Stage 5 — Images | implemented | Attach image to draft task |
+| 37 | `list_media` | Stage 5 — Images | implemented | List accessible assets |
+| 38 | `get_media` | Stage 5 — Images | implemented | Read asset metadata |
+| 39 | `detach_media` | Stage 5 — Images | implemented | Remove draft attachment without deleting history |
 | 40 | `get_learning_progress` | Stage 6 — SRS | planned | Read authorized learner progress |
 | 41 | `get_learning_statistics` | Stage 6 — SRS | planned | Read authorized learning statistics |
 | 42 | `get_weak_words` | Stage 6 — SRS | planned | Identify weak vocabulary |
@@ -67,10 +67,12 @@ Target: **45 distinct MCP tools**. Stage 4 establishes 33 implemented tools; the
 - No planned tool is exposed before its implementation, authorization and tests are ready.
 - All draft writes require expected_revision. Publish/rollback are explicitly approved and preserve historical task IDs, versions and answers.
 - Stage 3.3 supports draft_kind=new (TXT) and draft_kind=edit (JSON). Stage 1 is vocabulary; stages 2–8 are exercises. Task indices and insertion positions are zero-based, scoped to the specified stage and revision. Reorder accepts a full permutation. New tasks omit task_id; patch cannot change it. Draft deletion uses tombstones, hides drafts from list results and prevents UUID reuse; direct get returns deleted status. Published drafts cannot be deleted. Explicit confirmation is required for deletion and task removal.
-- Granular mutations validate the entire resulting draft, use compare-and-swap and return revision plus task references rather than full content. New-group TXT is canonicalized on granular mutation (comments/formatting are not preserved); use update_draft to edit incomplete raw TXT. Stage 7 generated audio is now supported; new images remain blocked until Stage 5.
+- Granular mutations validate the entire resulting draft, use compare-and-swap and return revision plus task references rather than full content. New-group TXT is canonicalized on granular mutation (comments/formatting are not preserved); use update_draft to edit incomplete raw TXT. Generated images and audio are supported with validated media references.
 - Media generation must enforce quotas, authorization, cost limits and safe storage; no live provider requests in CI.
 - Every stage must add tests and pass GitHub Actions on PostgreSQL before being marked implemented.
 
 - Stage 4: three primary gateways (OpenRouter/KodikRouter/Timeweb) and optional direct OpenAI/ElevenLabs adapters; reader discovery/estimates, editor generation/attachment, publisher publication. MP3 assets are immutable SHA-256-addressed PostgreSQL bytes. Cache keys include provider/model/voice/text/format. Paid generation uses explicit approval, per-call ceiling and atomic UTC-day reservations; failed or pending requests are not automatically retried. Costs are configured estimates, not verified provider invoices. History is retained in family_audio_versions and version snapshots.
 
 - Gateway catalog discovery: OpenRouter speech models endpoint; KodikRouter speech-filtered public catalog; Timeweb documented model/voices (no verified speech-specific discovery API). Configured per-model conservative tariff and output format are required for generation, with live enumerated voices when available or administrator allowlists. Raw PCM requires an explicit sample rate/channel profile; WAV/Opus/AAC/FLAC (Timeweb) and PCM are normalized through bounded FFmpeg to MP3. No automatic cross-gateway fallback or retry; costs are reservation estimates, not billing reconciliation.
+
+- Stage 5: OpenRouter dedicated Images API (optional chat surface), KodikRouter and Timeweb Images API. Explicit model/size/tariff profiles, default dry-run estimates, atomic UTC-day image reservations independent of TTS, no automatic retries. Bounded PNG/JPEG/WebP decode and JPEG normalization. Shared audio/image metadata and version links; detach invalidates publication until replacement or task removal. No external image URL fetching. All calls to paid providers in CI are mocked.
