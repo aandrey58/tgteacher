@@ -30,8 +30,8 @@ async def admin_family_export_callback(update: Update, context: ContextTypes.DEF
         with tempfile.TemporaryDirectory() as tmpdir:
             zip_path = os.path.join(tmpdir, 'family.zip')
             if folder_name and os.path.isdir(family_folder):
-                shutil.make_archive(base_name=zip_path[:-4], format='zip', root_dir=family_folder,
-                                    base_dir='.')
+                shutil.make_archive(base_name=zip_path[:-4], format='zip', root_dir=os.path.dirname(family_folder),
+                                    base_dir=os.path.basename(family_folder))
             else:
                 source = await get_published_source(family_id)
                 if source is None:
