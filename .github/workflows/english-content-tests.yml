@@ -35,7 +35,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install test dependencies
-        run: python -m pip install asyncpg
+        run: python -m pip install asyncpg python-telegram-bot pyzipper
       - name: Compile Python
         run: python -m compileall -q bot tests
       - name: Run regression and PostgreSQL integration tests
