@@ -47,7 +47,8 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         try:
             pool = await get_pool()
             async with pool.acquire(timeout=2) as conn:
-                await conn.fetchval("SELECT 1 FROM content_schema_migrations WHERE name='srs_v1'", timeout=2)
+                if not await conn.fetchval("SELECT 1 FROM content_schema_migrations WHERE name='srs_v1'", timeout=2):
+                    raise RuntimeError("Schema not initialized")
             return JSONResponse({"status":"ok"})
         except Exception:
             return JSONResponse({"status":"unavailable"},status_code=503)
