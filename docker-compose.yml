@@ -28,6 +28,7 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
       TGTEACHER_ADMINS_PATH: /app/runtime_cache/admins.txt
+      TGTEACHER_RUNTIME_DIR: /app/runtime_cache
     volumes:
       - ./families:/app/families
       - ./bot/exports:/app/bot/exports
