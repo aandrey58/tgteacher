@@ -81,6 +81,9 @@ async def migrate_content(conn):
             USING (family_idx, stage_num, task_id)
         """)
 
+        from tgteacher_bot.db.tts_repo import init_tts
+        await init_tts(conn)
+
         # Snapshot every pre-existing group exactly once, without changing its IDs.
         from tgteacher_bot.db.content_versions import record_initial_version
         missing = await conn.fetch("SELECT id FROM families f WHERE NOT EXISTS (SELECT 1 FROM family_versions v WHERE v.family_id=f.id AND v.version=f.content_version)")
