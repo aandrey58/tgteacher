@@ -323,3 +323,33 @@ attach_audio(draft_kind, draft_id, expected_revision, task_index, asset_id, expe
 Install FFmpeg for non-MP3 source formats (included in Dockerfile). PCM requires signed 16-bit little-endian samples and an explicit verified sample rate/channel count. Gateway models must support the configured format. New image publication remains deferred to Stage 5. TTS tests use mock providers and synthetic audio; no live credentials needed.
 
 API contracts: https://openrouter.ai/docs/guides/overview/multimodal/tts ; https://kodikrouter.ru/docs/audio ; https://timeweb.cloud/docs/ai-gateway/audio-api .
+
+
+### Stage 5 — Image Generation
+
+39/45 MCP tools. OpenRouter, KodikRouter and Timeweb share immutable media storage with Stage 4.
+Set OPENROUTER_API_KEY, KODIK_API_KEY, TIMEWEB_AI_TOKEN in the MCP process as needed, plus TGTEACHER_IMAGE_MODELS (JSON provider -> model -> profile).
+For example (illustrative tariff and model placeholders, replace with exact available model IDs and verified conservative tariffs):
+
+```json
+{
+  "openrouter": {"vendor/image-model": {"microusd_per_image": 50000, "size": "1024x1024", "surface": "images"}},
+  "kodikrouter": {"vendor/image-model": {"microusd_per_image": 50000, "size": "1024x1024"}},
+  "timeweb": {"vendor/image-model": {"microusd_per_image": 50000, "size": "1024x1024"}}
+}
+```
+
+The example is not a current pricing quote. Use the provider model catalog and verify supported dimensions; choose OpenRouter surface=chat for compatible chat-image models. Timeweb adapter uses the OpenAI-compatible Images endpoint; verify base64 support on the selected model before production. Only synchronous inline base64 responses (or inline data URI for chat) are accepted; URL fetch, SVG, animations, streaming and remote job polling are not supported. Normalization accepts PNG/JPEG/WebP, limits input to 16 MB / 16 megapixels, strips metadata, resizes to at most 1536 px and saves RGB JPEG. The output limit is 5 MB. No third-party URL fetch.
+
+TGTEACHER_IMAGE_DAILY_MICROUSD defaults to zero. This is a separate UTC-day reservation budget from TTS. Configure conservative per-image rates including markup, currency conversion and any token costs, and enforce provider-side spend ceilings. A failed or pending request retains its reservation; no automatic retry/fallback. The local ledger is an estimate, not provider billing reconciliation. The cache includes provider, model, surface, size and prompt. Batch max 10; prompt max 4000 UTF-8 bytes. Each invocation limits parallel generation to two.
+
+- list_media(kind="all", limit=30, offset=0): audio/image metadata, configured image models and image budget.
+- generate_image(provider, model, prompt, estimate_only=true): dry run by default. To actually generate, set estimate_only=false, confirm=true, max_cost_microusd to approved ceiling.
+- batch_generate_images(items, ...): same parameters for a batch of provider/model/prompt objects.
+- attach_image(draft_kind, draft_id, expected_revision, task_index, asset_id, expected_task_id): stage 5 image attachment. Published task requires its stable ID, new task uses null.
+- get_media(kind, asset_id, limit=30, offset=0): asset metadata, generation provenance and published version/task links (no binary payload).
+- detach_media(kind, draft_kind, draft_id, expected_revision, task_index, confirm=true, expected_task_id): stage 5 image or stage 7 audio. Draft-only operation; replacement required before publish, or remove the task. Old asset remains in cache/history. Generated media is read from PostgreSQL by the bot and included in ZIP exports. Existing local media folders remain supported.
+
+Shared trusted content-admin scopes: read for discovery/estimation, edit for generation/attachments, publish for publication. No live paid calls in CI. Before deploying back up PostgreSQL (now includes image bytes), configure model profiles, and run a small approved live smoke test for each gateway.
+
+Docs: https://openrouter.ai/docs/guides/overview/multimodal/image-generation ; https://kodikrouter.ru/docs/images ; https://timeweb.cloud/docs/ai-gateway/ ; https://github.com/timeweb-cloud/sdk-javascript .
