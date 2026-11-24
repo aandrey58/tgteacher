@@ -54,6 +54,7 @@ async def migrate_content(conn):
                 PRIMARY KEY(family_id, version, user_id)
             );
         """)
+        await conn.execute("ALTER TABLE family_version_learner_history ADD COLUMN IF NOT EXISTS task_progress JSONB")
         if not await conn.fetchval("SELECT 1 FROM content_schema_migrations WHERE name='stable_progress_v1'"):
             await conn.execute("ALTER TABLE user_task_progress ADD COLUMN IF NOT EXISTS task_id INTEGER")
             await conn.execute("""
