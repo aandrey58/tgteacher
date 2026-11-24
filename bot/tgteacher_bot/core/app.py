@@ -25,6 +25,7 @@ from telegram.ext import (
 )
 
 from tgteacher_bot.core import paths
+from tgteacher_bot.core.learning_session import LearningApplication
 from tgteacher_bot.handlers.admin.admin_panel import get_admin_families_menu, get_admin_menu, register_admin_handlers
 from tgteacher_bot.handlers.admin.admin_status import track_metrics
 from tgteacher_bot.handlers.admin.admin_status_info import register_status_info_handlers
@@ -271,7 +272,7 @@ def build_application() -> Application:
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN is not set in environment (.env)")
-    application = Application.builder().token(token).build()
+    application = Application.builder().application_class(LearningApplication).token(token).build()
     _register_handlers(application)
     application.post_init = _post_startup
     return application
