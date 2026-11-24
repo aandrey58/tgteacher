@@ -88,9 +88,45 @@ async def body(request):
     return result
 
 
+async def section_metrics(c,page):
+    statements={
+        "groups": """SELECT count(*) FILTER(WHERE archived_at IS NULL) AS published,
+            count(*) FILTER(WHERE archived_at IS NOT NULL) AS archived,
+            (SELECT count(*) FROM stage1_words WHERE archived_at IS NULL) AS words,
+            (SELECT count(*) FROM family_versions) AS versions FROM families""",
+        "drafts": """SELECT count(*) FILTER(WHERE status='draft') AS open_drafts,
+            count(*) FILTER(WHERE status='published') AS published_drafts,
+            count(*) FILTER(WHERE kind='edit' AND status='draft') AS edit_drafts
+            FROM (SELECT 'new' AS kind,CASE WHEN published_at IS NULL THEN 'draft' ELSE 'published' END AS status
+                FROM content_drafts WHERE deleted_at IS NULL UNION ALL
+                SELECT 'edit',CASE WHEN published_version IS NULL THEN 'draft' ELSE 'published' END
+                FROM family_edit_drafts WHERE deleted_at IS NULL) d""",
+        "learners": """SELECT count(*) AS total_learners,count(*) FILTER(WHERE last_active_at>=now()-interval '7 days') AS active_learners,
+            count(*) FILTER(WHERE is_subscribed AND (subscription_until IS NULL OR subscription_until>now())) AS vip_learners,
+            count(*) FILTER(WHERE registered_at>=now()-interval '7 days') AS new_learners FROM users""",
+        "reviews": """SELECT count(*) AS active_cards,count(*) FILTER(WHERE c.due<=now()) AS due_cards,
+            count(*) FILTER(WHERE c.card IS NOT NULL) AS rated_cards,
+            (SELECT count(*) FROM srs_reviews WHERE reviewed_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS reviewed_today
+            FROM srs_cards c JOIN families f ON f.id=c.family_id JOIN stage1_words w ON w.id=c.task_id
+            WHERE f.archived_at IS NULL AND w.archived_at IS NULL""",
+        "media": """SELECT (SELECT count(*) FROM audio_assets) AS audio_assets,
+            (SELECT count(*) FROM image_assets) AS image_assets,
+            (SELECT count(DISTINCT asset_id) FROM family_audio_versions) AS historical_audio_links,
+            (SELECT count(DISTINCT asset_id) FROM family_image_versions) AS historical_image_links""",
+        "tts": """SELECT (SELECT count(*) FROM audio_assets) AS audio_assets,
+            count(*) FILTER(WHERE status='ready') AS ready_requests,count(*) FILTER(WHERE status='pending') AS pending_requests,
+            count(*) FILTER(WHERE status='failed') AS failed_requests FROM tts_requests""",
+        "images": """SELECT (SELECT count(*) FROM image_assets) AS image_assets,
+            count(*) FILTER(WHERE status='ready') AS ready_requests,count(*) FILTER(WHERE status='pending') AS pending_requests,
+            count(*) FILTER(WHERE status='failed') AS failed_requests FROM image_requests"""
+    }
+    return dict(await c.fetchrow(statements[page])) if page in statements else {}
+
+
 async def page_data(page, offset, query):
     pool=await get_pool()
     async with pool.acquire() as c:
+        metrics=await section_metrics(c,page)
         if page=="dashboard":
             totals=await c.fetchrow("""SELECT
                 (SELECT count(*) FROM families WHERE archived_at IS NULL) published_groups,
@@ -108,7 +144,10 @@ async def page_data(page, offset, query):
         if page=="groups":
             rows=await c.fetch("""SELECT f.id,f.name,f.description,f.target,f.content_version,
                 CASE WHEN f.archived_at IS NULL THEN 'Published' ELSE 'Archived' END AS status,
-                (SELECT count(*) FROM stage1_words w WHERE w.family_id=f.id AND w.archived_at IS NULL) AS words
+                (SELECT count(*) FROM stage1_words w WHERE w.family_id=f.id AND w.archived_at IS NULL) AS words,
+                (SELECT count(DISTINCT stage_num) FROM active_task_positions t WHERE t.family_idx=f.id) AS stages,
+                (SELECT count(*) FROM user_family_progress p WHERE p.family_idx=f.id) AS learners,
+                (SELECT max(created_at)::text FROM family_versions v WHERE v.family_id=f.id) AS updated_at
                 FROM families f WHERE strpos(lower(f.name),lower($1))>0 OR $1=''
                 ORDER BY f.id DESC LIMIT 51 OFFSET $2""",query,offset)
         elif page=="drafts":
@@ -148,11 +187,19 @@ async def page_data(page, offset, query):
         else:
             rows=None
     if rows is not None:
-        return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50}
+        return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50,"metrics":metrics}
     kind={"media":"all","tts":"audio","images":"image"}[page]
-    result=await media.list_media(kind,50,offset)
-    return {"items":result["items"],"next":result["next_offset"] is not None,
-            "models":tts.list_providers()["providers"] if page=="tts" else result["image_models"] if page=="images" else []}
+    async with pool.acquire() as c:
+        rows=await c.fetch("""
+            SELECT * FROM (
+                SELECT 'image' AS kind,asset_id,octet_length(jpeg) AS size_bytes,width,height,created_at FROM image_assets
+                UNION ALL
+                SELECT 'audio',asset_id,octet_length(mp3),NULL::integer,NULL::integer,created_at FROM audio_assets
+            ) m WHERE ($1='all' OR kind=$1) AND ($2='' OR strpos(lower(asset_id),lower($2))>0)
+            ORDER BY created_at DESC,kind,asset_id LIMIT 51 OFFSET $3
+        """,kind,query,offset)
+    return {"items":[media._asset(r) for r in rows[:50]],"next":len(rows)>50,"metrics":metrics,
+            "models":tts.list_providers()["providers"] if page=="tts" else images.model_profiles() if page=="images" else []}
 
 
 def build_app(secret, origin, static_dir=None, initialize=True):
