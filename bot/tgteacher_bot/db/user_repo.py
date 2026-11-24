@@ -864,16 +864,22 @@ async def get_family_stage_answers_stats_pg(family_id: int) -> List[Dict[str, An
 async def delete_user_and_progress_pg(user_id: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Удаляем прогресс по всем группам слов
-        await conn.execute('DELETE FROM user_family_progress WHERE user_id = $1', user_id)
-        await conn.execute('DELETE FROM user_task_progress WHERE user_id = $1', user_id)
-        await conn.execute('DELETE FROM user_last_opened_family_place WHERE user_id = $1', user_id)
-        await conn.execute('DELETE FROM user_stage_state WHERE user_id = $1', user_id)
-        await conn.execute('DELETE FROM user_current_family WHERE user_id = $1', user_id)
-        # Удаляем самого пользователя
-        await conn.execute('DELETE FROM family_version_learner_history WHERE user_id = $1', user_id)
-        await conn.execute('DELETE FROM legacy_unmapped_progress WHERE user_id = $1', user_id)
-        await conn.execute('DELETE FROM users WHERE user_id = $1', user_id) 
+        async with conn.transaction():
+            from tgteacher_bot.db.srs_repo import lock_user
+            await lock_user(conn, user_id)
+            await conn.execute('DELETE FROM learner_tokens WHERE user_id = $1', user_id)
+            await conn.execute('DELETE FROM srs_cards WHERE user_id = $1', user_id)
+            await conn.execute('DELETE FROM learner_answer_events WHERE user_id = $1', user_id)
+            # Удаляем прогресс по всем группам слов
+            await conn.execute('DELETE FROM user_family_progress WHERE user_id = $1', user_id)
+            await conn.execute('DELETE FROM user_task_progress WHERE user_id = $1', user_id)
+            await conn.execute('DELETE FROM user_last_opened_family_place WHERE user_id = $1', user_id)
+            await conn.execute('DELETE FROM user_stage_state WHERE user_id = $1', user_id)
+            await conn.execute('DELETE FROM user_current_family WHERE user_id = $1', user_id)
+            # Удаляем самого пользователя
+            await conn.execute('DELETE FROM family_version_learner_history WHERE user_id = $1', user_id)
+            await conn.execute('DELETE FROM legacy_unmapped_progress WHERE user_id = $1', user_id)
+            await conn.execute('DELETE FROM users WHERE user_id = $1', user_id) 
 
 @track_db_errors
 async def set_family_finished_pg(user_id: int, family_idx: int):
