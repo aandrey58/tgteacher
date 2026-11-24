@@ -410,6 +410,25 @@ def _extract_family_zip(zip_path, staging):
                 logging.error(f"Не удалось переименовать TXT-файл '{current_txt_basename}' -> '{final_txt_basename}': {e}")
                 raise FamilyArchiveError('Не удалось привести имя TXT к имени семьи.')
         
+        # Imported generated assets are portable legacy files in this installation.
+        # Never leave a reserved content-addressed filename pointing to mutable disk bytes.
+        from tgteacher_bot.db.image_repo import managed_id as image_id
+        from tgteacher_bot.db.tts_repo import managed_id as audio_id
+        for stage, field, identify in (("stage5_tasks","image",image_id),("stage7_tasks","audio",audio_id)):
+            renamed = {}
+            for task in parsed_family_data.get(stage, []):
+                name = task[field]
+                if not identify(name):
+                    continue
+                if name not in renamed:
+                    matches = [f for f in os.listdir(target_dir) if f.casefold() == name.casefold()]
+                    if len(matches) != 1:
+                        raise FamilyArchiveError("Managed media missing or ambiguous")
+                    destination = "imported-" + uuid.uuid4().hex + os.path.splitext(name)[1]
+                    os.rename(os.path.join(target_dir,matches[0]), os.path.join(target_dir,destination))
+                    renamed[name] = destination
+                task[field] = renamed[name]
+
         # MCP: Автонормализация изображений + обновление ссылок
         try:
             parsed_family_data = _normalize_family_images(target_dir, parsed_family_data)
@@ -421,6 +440,10 @@ def _extract_family_zip(zip_path, staging):
         except Exception as e:
             logging.warning(f"[FAMILY NORMALIZE] Ошибка нормализации аудио: {type(e).__name__}: {e}")
         validate_family(parsed_family_data, media_dir=target_dir)
+        # Keep the portable TXT consistent with rewritten media references.
+        from tgteacher_bot.utils.family_renderer import render_family_txt
+        with open(txt_filepath,"w",encoding="utf-8") as target:
+            target.write(render_family_txt(parsed_family_data))
         final_dir = os.path.join(FAMILIES_DIR, f'{desired_name} ({uuid.uuid4().hex[:12]})')
         os.rename(target_dir, final_dir)
         return parsed_family_data, final_dir
