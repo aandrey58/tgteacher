@@ -92,6 +92,19 @@ def clean_content(content):
     if '"' in (result["name"] or ""):
         raise ValueError("Family name cannot contain double quotes")
     validate_family(result)
+    # Every edit must remain representable in the Telegram ZIP interchange format.
+    from tgteacher_bot.utils.family_renderer import render_family_txt
+    from tgteacher_bot.utils.family_parser import parse_family_text
+    parsed = parse_family_text(render_family_txt(result))
+    if any((parsed.get(k) or None) != (result.get(k) or None) for k in ('name', 'description', 'target')):
+        raise ValueError('Metadata cannot be represented in TXT format')
+    for stage, (_, _, fields) in STAGES.items():
+        key = stage_key(stage)
+        if len(parsed[key]) != len(result[key]):
+            raise ValueError(f'{key} cannot be represented in TXT format')
+        for left, right in zip(parsed[key], result[key]):
+            if any((left.get(k) or None) != (right.get(k) or None) for k in fields):
+                raise ValueError(f'{key} contains text or delimiters incompatible with TXT export')
     return result
 
 
@@ -182,6 +195,19 @@ async def create_edit_draft(family_id, draft_id, expected_version):
                 VALUES($1,$2,$3,$4::jsonb) RETURNING *
             """, ident, family_id, expected_version, json.dumps(content, ensure_ascii=False))
             return _draft(row)
+
+
+async def list_edit_drafts(family_id=None, limit=30, offset=0):
+    if not 1 <= limit <= 100 or offset < 0:
+        raise ValueError("Invalid pagination")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id::text AS draft_id, family_id, base_version, revision, published_version, created_at::text
+            FROM family_edit_drafts WHERE ($1::integer IS NULL OR family_id=$1)
+            ORDER BY created_at DESC,id LIMIT $2 OFFSET $3
+        """, family_id, limit+1, offset)
+        return {"items": [dict(row) for row in rows[:limit]], "next_offset": offset+limit if len(rows)>limit else None}
 
 
 async def get_edit_draft(draft_id):
