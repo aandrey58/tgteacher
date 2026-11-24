@@ -24,6 +24,7 @@ async def init_drafts(conn):
             family_id INTEGER REFERENCES families(id) ON DELETE SET NULL
         )
     """)
+    await conn.execute("ALTER TABLE content_drafts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ")
 
 
 def check_source(source):
@@ -59,7 +60,7 @@ def preview(source):
 def serialize(row, include_text=True):
     result = {
         "draft_id": str(row["id"]), "revision": row["revision"],
-        "status": (("archived" if row.get("archived_at") else "published") if row["family_id"] is not None else "published_deleted")
+        "status": "deleted" if row.get("deleted_at") else (("archived" if row.get("archived_at") else "published") if row["family_id"] is not None else "published_deleted")
                   if row["published_at"] else "draft",
         "family_id": row["family_id"],
         "updated_at": row["updated_at"].isoformat(),
@@ -80,7 +81,7 @@ async def create_draft(draft_id, source):
                 ON CONFLICT (id) DO NOTHING
             """, ident, source)
             row = await conn.fetchrow("SELECT d.*, (SELECT archived_at FROM families WHERE id=d.family_id) AS archived_at FROM content_drafts d WHERE d.id=$1", ident)
-            if row["family_txt"] != source:
+            if row["deleted_at"] is not None or row["family_txt"] != source:
                 raise DraftConflict("Draft ID already used with different content")
             return serialize(row)
 
@@ -99,7 +100,7 @@ async def list_drafts(limit=30, offset=0):
         raise ValueError("Invalid pagination")
     pool = await get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT d.*, (SELECT archived_at FROM families WHERE id=d.family_id) AS archived_at FROM content_drafts d ORDER BY updated_at DESC, id LIMIT $1 OFFSET $2", limit, offset)
+        rows = await conn.fetch("SELECT d.*, (SELECT archived_at FROM families WHERE id=d.family_id) AS archived_at FROM content_drafts d WHERE d.deleted_at IS NULL ORDER BY updated_at DESC, id LIMIT $1 OFFSET $2", limit, offset)
         return [serialize(row, False) for row in rows]
 
 
@@ -109,7 +110,7 @@ async def update_draft(draft_id, expected_revision, source):
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
             UPDATE content_drafts SET family_txt=$3, revision=revision+1, updated_at=now()
-            WHERE id=$1 AND revision=$2 AND published_at IS NULL RETURNING *
+            WHERE id=$1 AND revision=$2 AND published_at IS NULL AND deleted_at IS NULL RETURNING *
         """, uuid.UUID(draft_id), expected_revision, source)
         if not row:
             raise DraftConflict("Draft missing, published, or revision changed")
@@ -129,7 +130,7 @@ async def validate_draft(draft_id):
             report["publishable"] = False
     if draft["status"] != "draft":
         report["publishable"] = False
-        report["errors"].append("Already published; restore an archived group instead of publishing again")
+        report["errors"].append("Draft deleted or already published; create a new draft or restore the group")
     return {**report, "draft_id": draft_id, "revision": draft["revision"]}
 
 
@@ -140,6 +141,8 @@ async def publish_draft(draft_id, expected_revision):
             row = await conn.fetchrow("SELECT d.*, (SELECT archived_at FROM families WHERE id=d.family_id) AS archived_at FROM content_drafts d WHERE d.id=$1 FOR UPDATE", uuid.UUID(draft_id))
             if not row:
                 raise ValueError("Draft not found")
+            if row["deleted_at"] is not None:
+                raise DraftConflict("Draft was deleted")
             if row["revision"] != expected_revision:
                 raise DraftConflict("Draft revision changed; validate the current revision first")
             if row["published_at"]:
@@ -159,3 +162,25 @@ async def get_published_source(family_id):
     pool = await get_pool()
     async with pool.acquire() as conn:
         return await conn.fetchval("SELECT family_txt FROM content_drafts WHERE family_id=$1", family_id)
+
+
+async def delete_draft(draft_id, expected_revision):
+    """Tombstone an unpublished draft; reserve its UUID and keep retry safety."""
+    ident = uuid.UUID(draft_id)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow("SELECT * FROM content_drafts WHERE id=$1 FOR UPDATE", ident)
+            if not row or row["published_at"] is not None:
+                raise DraftConflict("Draft missing or already published")
+            if row["deleted_at"] is not None:
+                if row["revision"] != expected_revision + 1:
+                    raise DraftConflict("Draft revision changed")
+                return serialize(row, False)
+            if row["revision"] != expected_revision:
+                raise DraftConflict("Draft revision changed")
+            row = await conn.fetchrow("""
+                UPDATE content_drafts SET deleted_at=now(), updated_at=now(), revision=revision+1
+                WHERE id=$1 RETURNING *
+            """, ident)
+            return serialize(row, False)
