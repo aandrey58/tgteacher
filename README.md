@@ -389,3 +389,8 @@ All learner tools intentionally omit a user_id argument. Stage 6 schedules vocab
 Example patch: {"daily_review_goal":30,"desired_retention":0.92,"review_order":"weak_first","self_assessed_level":"B1"}. Read the profile first and use its current revision. Changing retention does not retroactively reschedule existing cards. Review order prioritizes cards with the last rating Again/Hard or FSRS difficulty >=7, without bypassing due dates or subscription access. Existing Telegram review menu displays goal progress after every rating. Preference records are deleted with the learner account. Both scopes remain separate from content-admin credentials.
 
 Roadmap completion is a code/CI milestone, not a production deployment or verification of live provider billing, Telegram delivery, or external ChatGPT OAuth linking.
+
+
+### Stage 8 — Release Audit & Deployment
+
+Read [release runbook](docs/RELEASE_RUNBOOK.md) before upgrading. Compose now runs PostgreSQL, Telegram bot and MCP separately. Copy the three example env files, configure secrets and persist the admin list under runtime_cache. MCP is loopback-bound; DB is not exposed. CI builds the release image and checks authenticated MCP discovery and real bot application registration without contacting Telegram. 45 tools remain unchanged. A real OAuth authorization server and staging validation are prerequisites for ChatGPT deployment; no unauthenticated mode.
