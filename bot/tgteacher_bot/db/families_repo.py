@@ -141,17 +141,18 @@ async def get_all_families_meta_pg() -> List[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
-            SELECT id, name, description, folder_name, target FROM families ORDER BY id DESC
+            SELECT id, name, description, folder_name, target FROM families WHERE archived_at IS NULL ORDER BY id DESC
         ''')
         return [{'id': row['id'], 'name': row['name'], 'description': row['description'], 'folder_name': row['folder_name'], 'target': row['target']} for row in rows]
 
 @track_db_errors
-async def get_family_data_pg(family_id: int) -> Dict[str, Any] | None:
+async def get_family_data_pg(family_id: int, include_archived: bool = False) -> Dict[str, Any] | None:
     pool = await get_pool()
     async with pool.acquire() as conn:
         family_meta = await conn.fetchrow('''
-            SELECT id, name, description, folder_name, target FROM families WHERE id = $1
-        ''', family_id)
+            SELECT id, name, description, folder_name, target, archived_at FROM families
+            WHERE id = $1 AND ($2::boolean OR archived_at IS NULL)
+        ''', family_id, include_archived)
         if not family_meta: return None
         
         family = {
@@ -159,7 +160,8 @@ async def get_family_data_pg(family_id: int) -> Dict[str, Any] | None:
             'name': family_meta['name'],
             'description': family_meta['description'],
             'folder_name': family_meta['folder_name'],
-            'target': family_meta['target']
+            'target': family_meta['target'],
+            'archived_at': family_meta['archived_at'].isoformat() if family_meta['archived_at'] else None
         }
 
         return family
@@ -275,15 +277,28 @@ async def get_stage8_tasks_pg(family_id: int) -> List[Dict[str, Any]]:
         return tasks_list
 
 @track_db_errors
-async def delete_family_from_pg(family_id: int):
+async def set_family_archived_pg(family_id: int, archived: bool):
+    """Hide or restore a family without changing its ID, tasks, media or progress."""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            DELETE FROM families WHERE id = $1
-        ''', family_id)
-    # MCP: Удаляем прогресс юзеров по этой группе слов
-    from tgteacher_bot.db.user_repo import delete_all_user_progress_for_family
-    await delete_all_user_progress_for_family(family_id)
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
+            row = await conn.fetchrow("""
+                UPDATE families SET archived_at=CASE WHEN $2::boolean
+                    THEN coalesce(archived_at, now()) ELSE NULL END
+                WHERE id=$1 RETURNING id, name, archived_at
+            """, family_id, archived)
+            if row is None:
+                raise ValueError("Family not found")
+            return {"family_id": row["id"], "name": row["name"],
+                    "archived": row["archived_at"] is not None,
+                    "archived_at": row["archived_at"].isoformat() if row["archived_at"] else None}
+
+
+async def delete_family_from_pg(family_id: int):
+    """Legacy delete API now archives instead of erasing learner data."""
+    return await set_family_archived_pg(family_id, True)
+
 
 @track_db_errors
 async def get_all_stage_tasks_counts_for_families(family_ids: List[int]) -> Dict[int, Dict[int, int]]:
