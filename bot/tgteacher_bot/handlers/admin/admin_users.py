@@ -1025,7 +1025,7 @@ def register_admin_users_handlers(application):
     from tgteacher_bot.handlers.admin.admin_new_users_search_id import register_admin_new_users_search_handlers
     register_admin_new_users_search_handlers(application)
     # MCP: Глобальный дебаг-хендлер для всех сообщений
-    application.add_handler(MessageHandler(filters.ALL, debug_text_handler), group=999)
+    # Do not register the legacy raw-message debug logger (PII and credentials).
     # MCP: Регистрируем админский просмотр прогресса пользователя
     from tgteacher_bot.handlers.admin.admin_user_progress import register_admin_user_progress_handlers
     register_admin_user_progress_handlers(application)
