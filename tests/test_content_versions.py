@@ -12,6 +12,8 @@ sys.path.insert(0, str(ROOT / "bot"))
 from tgteacher_bot.db import content_versions as versions, content_schema, families_repo as families, user_repo as users
 from tgteacher_bot.core.learning_session import SESSION, versioned_markup, callback_matches
 from telegram import InlineKeyboardButton
+from tgteacher_bot.utils.family_renderer import render_family_txt
+from tgteacher_bot.utils.family_parser import parse_family_text
 
 
 def sample():
@@ -157,3 +159,39 @@ class VersionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await conn.fetchval("SELECT task_id FROM user_task_progress WHERE family_idx=$1", fid), expected)
             self.assertEqual(await conn.fetchval("SELECT task_idx FROM legacy_unmapped_progress WHERE family_idx=$1", fid), 99)
         self.assertEqual((await users.get_completed_tasks_pg([1], fid, 1))[1], {1})
+
+
+    async def test_metadata_edit_preserves_position_and_state(self):
+        await users.set_user_stage_state_pg(77, self.fid, 1, {"family_idx": self.fid, "tasks_order": [2, 0, 1], "word_idx": 1})
+        await users.set_last_opened_family_place_pg(77, self.fid, 1, 1)
+        d = await self.draft()
+        d["content"]["description"] = "Metadata only"
+        await versions.update_edit_draft(d["draft_id"], 1, d["content"])
+        await versions.publish_edit(d["draft_id"], 2)
+        self.assertEqual((await users.get_user_stage_state_pg(77, self.fid, 1))["tasks_order"], [2,0,1])
+        self.assertEqual((await users.get_user_stage_state_pg(77, self.fid, 1))["content_version"], 2)
+        self.assertEqual(await users.get_last_opened_family_place_pg(77, self.fid), (1, 1))
+
+    async def test_all_eight_stages_use_stable_ids(self):
+        from test_content_management import sample as all_stages
+        data = all_stages()
+        data["name"] = "Eight stages"
+        fid = await families.save_family_to_pg(data)
+        for stage in range(1, 9):
+            await users.set_task_done_pg(33, fid, stage, 0)
+        expected = (await versions.get_current_content(fid))
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT stage_num, task_id FROM user_task_progress WHERE family_idx=$1 ORDER BY stage_num", fid)
+        self.assertEqual([r["task_id"] for r in rows], [expected[content_schema.stage_key(n)][0]["task_id"] for n in range(1,9)])
+        self.assertEqual(len(rows), 8)
+        text = render_family_txt(expected)
+        parsed = parse_family_text(text)
+        self.assertEqual(parsed["name"], data["name"])
+        for stage in range(1,9):
+            self.assertEqual(len(parsed[content_schema.stage_key(stage)]), 1)
+
+    async def test_invalid_export_delimiters_are_rejected(self):
+        d = await self.draft()
+        d["content"]["stage2_tasks"][0]["choices"][1] = "hat; cap"
+        with self.assertRaises(ValueError):
+            await versions.update_edit_draft(d["draft_id"], 1, d["content"])
