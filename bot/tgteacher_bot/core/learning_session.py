@@ -88,7 +88,8 @@ class LearningApplication(Application):
                         if state and (state.get('family_idx') != fid or state.get('content_version', 1) != version):
                             user_data.pop(key, None)
                 if query and stamp:
-                    query.update_callback_data(plain)
+                    # PTB TelegramObject is frozen; normalize this in-memory update only.
+                    object.__setattr__(query, 'data', plain)
                 token = SESSION.set((fid, version) if fid and version else None)
                 try:
                     return await super().process_update(update)
