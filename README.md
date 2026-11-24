@@ -362,11 +362,30 @@ When a learner completes a stage-1 vocabulary card, it enters their personal rev
 
 Telegram private chat: /review or the main menu "Повторить слова" displays a due English word; recall the translation, reveal it, then choose Again / Hard / Good / Easy. FSRS stores full card state, due timestamp, before/after state and review log. One outstanding ticket per learner expires in 15 minutes, is bound to task ID, card revision and group version, and is consumed atomically on rating. Reorder and media/cosmetic edits retain card IDs; replaced words become new IDs. Archive and rollback retain history; archived words/groups and inaccessible VIP cards are omitted from the queue. Restarting a lesson does not erase independent review history. Account deletion erases learner credentials and SRS data transactionally.
 
-MCP learner authorization: in a **private Telegram chat**, run /review_token to issue a 24-hour personal bearer token (requires /start first). Only its SHA-256 hash is stored; issuance rotates the previous token. /review_revoke revokes it. Configure the MCP client with that bearer credential using HTTPS outside localhost. Do not send the token in prompts or share it. The learner token grants learner:read only, with identity derived from the server-verified token. Existing content credentials cannot query personal statistics and learner credentials cannot read or mutate content-admin tools. OAuth content introspection does not grant learner scope. External OAuth account linking and automatic token refresh are not implemented.
+MCP learner authorization: in a **private Telegram chat**, run /review_token to issue a 24-hour personal bearer token (requires /start first). Only its SHA-256 hash is stored; issuance rotates the previous token. /review_revoke revokes it. Configure the MCP client with that bearer credential using HTTPS outside localhost. Do not send the token in prompts or share it. The learner token grants learner:read and learner:edit (own preferences only), with identity derived from the server-verified token. Existing content credentials cannot query personal statistics and learner credentials cannot read or mutate content-admin tools. OAuth content introspection does not grant learner scope. External OAuth account linking and automatic token refresh are not implemented.
 
 - get_learning_progress(limit,offset): own started group totals and completions, including archived history.
 - get_learning_statistics(days=30): own dated lesson attempts/correct counts, undated legacy snapshot count, FSRS rating histogram and accessible/due card counts.
 - get_weak_words(limit,offset): rated accessible vocabulary with recent (last) rating Again/Hard or FSRS difficulty >=7.
 - get_due_reviews(limit,offset): own accessible vocabulary due at current time. Read-only, not a review submission endpoint.
 
-All learner tools intentionally omit a user_id argument. Stage 6 schedules vocabulary cards, not every exercise or inferred cross-exercise word association. No reminders, per-learner optimizer, reverse translation or adaptive preferences yet. Existing lesson UI continues unchanged. Review ratings are self-assessed; no claim of objective recall accuracy.
+All learner tools intentionally omit a user_id argument. Stage 6 schedules vocabulary cards, not every exercise or inferred cross-exercise word association. No reminders, per-learner parameter optimizer or reverse translation yet. Existing lesson UI continues unchanged. Review ratings are self-assessed; no claim of objective recall accuracy.
+
+
+### Stage 7 — Adaptive Learning
+
+45/45 planned MCP tools implemented. The two final tools use the existing Telegram-linked learner credentials; no arbitrary user ID is accepted.
+
+- `get_learner_profile()` returns the current preference revision, daily UTC review count, outstanding workload, recommended action, suggested number of reviews, and 30-day stage evidence. Weak stages require at least five dated attempts and accuracy below 70%; CEFR is explicitly self-assessed, not inferred from this sample.
+- `update_learning_preferences(expected_revision, patch, confirm=true)` modifies only the caller's settings. A learner without a stored preference row has revision 0. Each accepted update increments revision. Unknown keys, invalid values, stale revisions and unconfirmed requests are rejected.
+
+| Preference | Default | Effect |
+|---|---|---|
+| daily_review_goal | 20 | 5–200 reviews; Telegram progress and suggested workload, not a hard cap |
+| desired_retention | 0.90 | 0.80–0.97; FSRS scheduling at subsequent ratings |
+| review_order | due | due or weak_first; only due, accessible cards |
+| self_assessed_level | unspecified | A1–C2 or unspecified; recorded as self-assessment |
+
+Example patch: {"daily_review_goal":30,"desired_retention":0.92,"review_order":"weak_first","self_assessed_level":"B1"}. Read the profile first and use its current revision. Changing retention does not retroactively reschedule existing cards. Review order prioritizes cards with the last rating Again/Hard or FSRS difficulty >=7, without bypassing due dates or subscription access. Existing Telegram review menu displays goal progress after every rating. Preference records are deleted with the learner account. Both scopes remain separate from content-admin credentials.
+
+Roadmap completion is a code/CI milestone, not a production deployment or verification of live provider billing, Telegram delivery, or external ChatGPT OAuth linking.
