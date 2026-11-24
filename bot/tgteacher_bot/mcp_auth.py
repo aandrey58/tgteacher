@@ -11,6 +11,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 READ = "content:read"
 EDIT = "content:edit"
 PUBLISH = "content:publish"
+LEARNER_READ = "learner:read"
 
 
 class StaticTokenVerifier:
@@ -55,7 +56,7 @@ class IntrospectionTokenVerifier:
                 return None
             if not isinstance(exp, int) or exp <= time.time():
                 return None
-            scopes = data.get("scope", "").split()
+            scopes = [s for s in data.get("scope", "").split() if s in (READ, EDIT, PUBLISH)]
             if READ not in scopes:
                 return None
             return AccessToken(token=token, client_id=str(data.get("client_id") or "oauth"),
@@ -80,3 +81,32 @@ def require_scope(scope):
     token = get_access_token()
     if not token or scope not in token.scopes:
         raise PermissionError("Insufficient permission: " + scope)
+
+
+class LearnerTokenVerifier:
+    """Separate Telegram-linked credentials from the existing content roles."""
+    def __init__(self, content_verifier, resource):
+        self.content_verifier = content_verifier
+        self.resource = resource
+
+    async def verify_token(self, token: str):
+        if not token.startswith("tgtl_"):
+            return await self.content_verifier.verify_token(token)
+        from tgteacher_bot.db.srs_repo import verify_token
+        try:
+            row = await verify_token(token)
+        except Exception:
+            return None
+        if not row:
+            return None
+        return AccessToken(token=token,client_id=f"learner:{row['user_id']}",
+                           scopes=[LEARNER_READ],expires_at=int(row["expires_at"].timestamp()),resource=self.resource)
+
+
+def require_learner():
+    require_scope(LEARNER_READ)
+    token = get_access_token()
+    prefix, sep, uid = token.client_id.partition(":")
+    if prefix != "learner" or not sep or not uid.isascii() or not uid.isdecimal():
+        raise PermissionError("Learner identity unavailable")
+    return int(uid)
