@@ -26,6 +26,7 @@ from telegram.ext import (
 
 from tgteacher_bot.core import paths
 from tgteacher_bot.core.learning_session import LearningApplication
+from tgteacher_bot.core.admin_guard import AdminRegistration
 from tgteacher_bot.handlers.admin.admin_panel import get_admin_families_menu, get_admin_menu, register_admin_handlers
 from tgteacher_bot.handlers.admin.admin_status import track_metrics
 from tgteacher_bot.handlers.admin.admin_status_info import register_status_info_handlers
@@ -125,7 +126,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if first_name:
         welcome_text = (
             f"Здравствуйте, {first_name}!\n\n"
-            "Добро пожаловать в бот для изучения немецкого языка. Здесь вы сможете эффективно расширить свой словарный запас.\n\n"
+            "Добро пожаловать в бот для изучения английского языка. Здесь вы сможете эффективно расширить свой словарный запас.\n\n"
             "Пожалуйста, выберите один из пунктов меню, чтобы начать."
         )
     else:
@@ -242,9 +243,10 @@ def _register_handlers(application: Application):
     register_settings_handlers(application)
     register_help_handlers(application)
     register_subscription_handlers(application)
-    register_admin_handlers(application)
-    register_status_info_handlers(application)
-    register_admin_users_handlers(application)
+    guarded = AdminRegistration(application)
+    register_admin_handlers(guarded)
+    register_status_info_handlers(guarded)
+    register_admin_users_handlers(guarded)
 
 
 async def _post_startup(application: Application):
