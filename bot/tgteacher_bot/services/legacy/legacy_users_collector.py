@@ -8,7 +8,7 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 # Файл для хранения данных о пользователях
-LEGACY_USERS_FILE = 'legacy_users.json'
+LEGACY_USERS_FILE = os.path.join(os.getenv('TGTEACHER_RUNTIME_DIR', '.'), 'legacy_users.json')
 
 def save_user_to_legacy_file(user_id: int, username: str, first_name: str, last_name: str):
     """Сохраняет данные пользователя в JSON файл для последующей обработки"""
