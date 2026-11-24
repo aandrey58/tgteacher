@@ -6,7 +6,12 @@ VALID_TARGETS = {"FREE", "VIP", "VIP+FREE"}
 
 def parse_family_txt(filepath: str) -> Dict[str, Any]:
     with open(filepath, encoding='utf-8') as f:
-        lines = [line.strip() for line in f if line.strip() and not line.strip().startswith('//')]
+        return parse_family_text(f.read())
+
+
+def parse_family_text(text: str) -> Dict[str, Any]:
+    lines = [line.strip() for line in text.splitlines()
+             if line.strip() and not line.strip().startswith('//')]
 
     family = {
         'name': None, 'description': None, 'words': [], 
