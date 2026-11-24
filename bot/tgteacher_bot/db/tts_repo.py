@@ -183,7 +183,7 @@ async def _existing(conn, prepared):
 async def _spent(conn):
     return int(await conn.fetchval("""
         SELECT coalesce(sum(reserved_microusd),0) FROM tts_requests
-        WHERE reserved_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+        WHERE reserved_at >= date_trunc('day', statement_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
     """))
 
 
@@ -231,8 +231,8 @@ async def generate_batch(items, max_cost_microusd):
             for key, p, voice, _, price in unique.values():
                 if key not in existing:
                     await conn.execute("""
-                        INSERT INTO tts_requests(cache_key,provider,model,voice,status,reserved_microusd)
-                        VALUES($1,$2,$3,$4,'pending',$5)
+                        INSERT INTO tts_requests(cache_key,provider,model,voice,status,reserved_microusd,reserved_at)
+                        VALUES($1,$2,$3,$4,'pending',$5,statement_timestamp())
                     """, key, p.name, p.model, voice, price)
     semaphore = asyncio.Semaphore(3)
 
