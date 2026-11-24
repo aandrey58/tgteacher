@@ -2,6 +2,7 @@ import json
 import logging
 from tgteacher_bot.db.user_repo import set_user_stage_state_pg, get_user_stage_state_pg, get_current_family_idx_pg, get_last_opened_family_place_pg
 from tgteacher_bot.db.families_repo import get_family_data_pg
+from tgteacher_bot.core.learning_session import SESSION
 
 logger = logging.getLogger(__name__)
 
@@ -120,19 +121,28 @@ async def ensure_stage_state(update, context, stage_key: str, stage_num: int, de
                 await update.message.reply_text('Ошибка: группа слов не выбрана или не найдена.')
             return False, None # Возвращаем False и None, чтобы вызывающая функция знала об ошибке
 
+    session = SESSION.get()
+    version = session[1] if session and session[0] == family_id else (await get_family_data_pg(family_id) or {}).get('content_version', 1)
     st = context.user_data.get(stage_key)
+    if st and (st.get('family_idx') != family_id or st.get('content_version', 1) != version):
+        context.user_data.pop(stage_key, None)
+        st = None
     if not st:
         saved_state = await get_user_stage_state_pg(user_id, family_id, stage_num)
-        if saved_state:
+        if saved_state and saved_state.get('content_version', 1) == version:
             st = saved_state
             context.user_data[stage_key] = st
             logger.info(f"Загружено состояние {stage_key} из БД для пользователя {user_id}, группы слов {family_id}")
         else:
             # Инициализируем дефолтное состояние, используя переданную функцию/лямбду
             default_state = await default_state_func(user_id, family_id, stage_num)
+            if default_state is None:
+                return False, None
+            default_state['content_version'] = version
             context.user_data[stage_key] = default_state
             st = default_state
             await update_stage_state(context, stage_key, family_id, stage_num, user_id)
             logger.info(f"Создано новое состояние {stage_key} для пользователя {user_id}, группы слов {family_id}")
     
+    st['content_version'] = version
     return True, st # Возвращаем True и состояние, если всё успешно 
