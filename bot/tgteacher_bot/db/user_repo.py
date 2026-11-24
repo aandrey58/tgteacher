@@ -99,6 +99,7 @@ async def init_db_pg():
                 target TEXT
             );
         ''')
+        await conn.execute("ALTER TABLE families ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ")
         # Удаляем ограничение UNIQUE с поля name, если оно существует
         await conn.execute('''
             ALTER TABLE families DROP CONSTRAINT IF EXISTS families_name_key
@@ -395,11 +396,16 @@ async def get_started_families_ids_pg(user_id: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
-            SELECT DISTINCT uss.family_idx, MAX(uss.last_activity_timestamp) as last_activity
-            FROM user_stage_state uss
-            WHERE uss.user_id = $1 
-            GROUP BY uss.family_idx
-            ORDER BY last_activity DESC
+            SELECT history.family_idx, MAX(history.activity) AS last_activity
+            FROM (
+                SELECT family_idx, last_activity_timestamp AS activity FROM user_stage_state WHERE user_id=$1
+                UNION ALL
+                SELECT family_idx, first_opened_timestamp AS activity FROM user_family_progress WHERE user_id=$1
+                UNION ALL
+                SELECT family_idx, NULL::timestamptz AS activity FROM user_task_progress WHERE user_id=$1
+            ) history JOIN families f ON f.id=history.family_idx
+            GROUP BY history.family_idx
+            ORDER BY last_activity DESC NULLS LAST, history.family_idx DESC
         ''', user_id)
         return [row['family_idx'] for row in rows]
 
@@ -637,6 +643,7 @@ async def clean_inactive_user_states_pg(inactivity_threshold_minutes: int):
         await conn.execute(f'''
             DELETE FROM user_stage_state
             WHERE last_activity_timestamp < NOW() - INTERVAL '{interval_str}'
+              AND NOT EXISTS (SELECT 1 FROM families f WHERE f.id=user_stage_state.family_idx AND f.archived_at IS NOT NULL)
         ''') 
 
 @track_db_errors
