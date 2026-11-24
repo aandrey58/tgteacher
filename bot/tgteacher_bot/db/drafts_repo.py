@@ -59,7 +59,7 @@ def preview(source):
 def serialize(row, include_text=True):
     result = {
         "draft_id": str(row["id"]), "revision": row["revision"],
-        "status": ("published" if row["family_id"] is not None else "published_deleted")
+        "status": (("archived" if row.get("archived_at") else "published") if row["family_id"] is not None else "published_deleted")
                   if row["published_at"] else "draft",
         "family_id": row["family_id"],
         "updated_at": row["updated_at"].isoformat(),
@@ -79,7 +79,7 @@ async def create_draft(draft_id, source):
                 INSERT INTO content_drafts (id, family_txt) VALUES ($1, $2)
                 ON CONFLICT (id) DO NOTHING
             """, ident, source)
-            row = await conn.fetchrow("SELECT * FROM content_drafts WHERE id=$1", ident)
+            row = await conn.fetchrow("SELECT d.*, (SELECT archived_at FROM families WHERE id=d.family_id) AS archived_at FROM content_drafts d WHERE d.id=$1", ident)
             if row["family_txt"] != source:
                 raise DraftConflict("Draft ID already used with different content")
             return serialize(row)
@@ -88,7 +88,7 @@ async def create_draft(draft_id, source):
 async def get_draft(draft_id):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM content_drafts WHERE id=$1", uuid.UUID(draft_id))
+        row = await conn.fetchrow("SELECT d.*, (SELECT archived_at FROM families WHERE id=d.family_id) AS archived_at FROM content_drafts d WHERE d.id=$1", uuid.UUID(draft_id))
         if not row:
             raise ValueError("Draft not found")
         return serialize(row)
@@ -99,7 +99,7 @@ async def list_drafts(limit=30, offset=0):
         raise ValueError("Invalid pagination")
     pool = await get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM content_drafts ORDER BY updated_at DESC, id LIMIT $1 OFFSET $2", limit, offset)
+        rows = await conn.fetch("SELECT d.*, (SELECT archived_at FROM families WHERE id=d.family_id) AS archived_at FROM content_drafts d ORDER BY updated_at DESC, id LIMIT $1 OFFSET $2", limit, offset)
         return [serialize(row, False) for row in rows]
 
 
@@ -127,6 +127,9 @@ async def validate_draft(draft_id):
         if any(family_identity(row["name"], row["target"]) == identity for row in existing):
             report["errors"].append("A group with this name and access level already exists")
             report["publishable"] = False
+    if draft["status"] != "draft":
+        report["publishable"] = False
+        report["errors"].append("Already published; restore an archived group instead of publishing again")
     return {**report, "draft_id": draft_id, "revision": draft["revision"]}
 
 
@@ -134,7 +137,7 @@ async def publish_draft(draft_id, expected_revision):
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            row = await conn.fetchrow("SELECT * FROM content_drafts WHERE id=$1 FOR UPDATE", uuid.UUID(draft_id))
+            row = await conn.fetchrow("SELECT d.*, (SELECT archived_at FROM families WHERE id=d.family_id) AS archived_at FROM content_drafts d WHERE d.id=$1 FOR UPDATE", uuid.UUID(draft_id))
             if not row:
                 raise ValueError("Draft not found")
             if row["revision"] != expected_revision:
