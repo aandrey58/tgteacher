@@ -1,7 +1,7 @@
 from telegram import InlineKeyboardButton, Update, InputFile
 from tgteacher_bot.core.learning_session import versioned_markup as InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from tgteacher_bot.db.tts_repo import get_audio_bytes
+from tgteacher_bot.db.tts_repo import get_audio_bytes, managed_id
 from tgteacher_bot.db.families_repo import get_family_data_pg, get_stage7_tasks_pg, get_stage8_tasks_pg
 from tgteacher_bot.db.user_repo import (
     set_task_done_pg,
@@ -145,7 +145,7 @@ async def _send_audio_and_text(update: Update, context: ContextTypes.DEFAULT_TYP
                 global_file_id_cache.pop(cache_key, None)
         if audio_message is None:
             data = await get_audio_bytes(audio_name)
-            if data is None:
+            if data is None and not managed_id(audio_name):
                 family_dir = os.path.join(_families_root_dir(), family_meta['folder_name'] or '')
                 audio_path = find_file_case_insensitive(family_dir, audio_name)
                 if audio_path:
