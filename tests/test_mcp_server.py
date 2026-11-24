@@ -87,7 +87,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         result = self.rpc("tools/list").json()["result"]
         names = {tool["name"] for tool in result["tools"]}
-        self.assertEqual(len(names), 20)
+        self.assertEqual(len(names), 21)
         self.assertIn("publish_draft", names)
         self.assertIn("archive_family", names)
         self.assertIn("restore_family", names)
@@ -184,6 +184,7 @@ class HTTPTests(unittest.TestCase):
         args = {"family_id": published["family_id"], "draft_id": edit_id, "expected_version": 1}
         self.assertTrue(self.call("create_edit_draft", args, READER)["isError"])
         edit = invoke("create_edit_draft", args, EDITOR)
+        self.assertEqual(invoke("list_edit_drafts", {"family_id": published["family_id"]}, READER)["items"][0]["draft_id"], edit_id)
         edit["content"]["words"][0]["translation"] = "проездной билет"
         edit = invoke("update_edit_draft", {"draft_id": edit_id, "expected_revision": 1, "content": edit["content"]}, EDITOR)
         preview = invoke("preview_edit", {"draft_id": edit_id}, READER)
