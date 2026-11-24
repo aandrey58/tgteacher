@@ -14,7 +14,8 @@ PUBLISH = "content:publish"
 
 
 class StaticTokenVerifier:
-    def __init__(self, reader, editor, publisher):
+    def __init__(self, reader, editor, publisher, resource="http://127.0.0.1:8000/mcp"):
+        self.resource = resource
         tokens = [reader, editor, publisher]
         if any(not t or len(t) < 32 or not t.isascii() for t in tokens) or len(set(tokens)) != 3:
             raise ValueError("Configure three distinct ASCII bearer tokens of at least 32 characters")
@@ -29,7 +30,7 @@ class StaticTokenVerifier:
             return None
         for secret, client_id, scopes in self.tokens:
             if hmac.compare_digest(token, secret):
-                return AccessToken(token=token, client_id=client_id, scopes=scopes)
+                return AccessToken(token=token, client_id=client_id, scopes=scopes, resource=self.resource)
         return None
 
 
@@ -67,7 +68,7 @@ def verifier_from_env(resource):
     mode = os.getenv("TGTEACHER_MCP_AUTH_MODE", "static")
     if mode == "static":
         return StaticTokenVerifier(*(os.getenv("TGTEACHER_MCP_" + key + "_TOKEN", "")
-                                     for key in ("READ", "EDIT", "PUBLISH")))
+                                     for key in ("READ", "EDIT", "PUBLISH")), resource=resource)
     if mode == "oauth":
         return IntrospectionTokenVerifier(os.environ["TGTEACHER_MCP_INTROSPECTION_URL"],
                                           os.environ["TGTEACHER_MCP_CLIENT_ID"],
