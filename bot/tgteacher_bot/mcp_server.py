@@ -1,6 +1,7 @@
 """TGTeacher content MCP — Streamable HTTP, no Telegram or provider keys needed."""
 import os
 from urllib.parse import urlsplit
+from typing import Any
 
 import uvicorn
 from dotenv import load_dotenv
@@ -43,7 +44,7 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
     write = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 
     @server.tool(annotations=read)
-    async def list_families(limit: int = 30, offset: int = 0) -> dict:
+    async def list_families(limit: int = 30, offset: int = 0) -> dict[str, Any]:
         """List published lesson groups with IDs and access tiers."""
         require_scope(READ)
         _page(limit, offset)
@@ -53,7 +54,7 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         return {"items": [dict(row) for row in rows[:limit]], "next_offset": offset + limit if len(rows) > limit else None}
 
     @server.tool(annotations=read)
-    async def get_family(family_id: int) -> dict:
+    async def get_family(family_id: int) -> dict[str, Any]:
         """Read one published group and all eight exercise sets."""
         require_scope(READ)
         family = await families.get_family_data_pg(family_id)
@@ -66,7 +67,7 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         return family
 
     @server.tool(annotations=read)
-    async def search_words(query: str, limit: int = 30, offset: int = 0) -> dict:
+    async def search_words(query: str, limit: int = 30, offset: int = 0) -> dict[str, Any]:
         """Search existing English words and Russian translations by substring."""
         require_scope(READ)
         _page(limit, offset)
@@ -84,7 +85,7 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         return {"items": [dict(row) for row in rows[:limit]], "next_offset": offset + limit if len(rows) > limit else None}
 
     @server.tool(annotations=read)
-    async def get_content_format() -> dict:
+    async def get_content_format() -> dict[str, Any]:
         """Get the actual TGTeacher TXT template and authoring rules."""
         require_scope(READ)
         from tgteacher_bot.core.paths import families_dir
@@ -92,37 +93,37 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
                 "note": "All stages except stage 1 are optional. Media publication requires later integration."}
 
     @server.tool(annotations=write)
-    async def create_draft(draft_id: str, family_txt: str) -> dict:
+    async def create_draft(draft_id: str, family_txt: str) -> dict[str, Any]:
         """Create a private draft. Supply a new UUID; reusing it with identical text is idempotent."""
         require_scope(EDIT)
         return await drafts.create_draft(draft_id, family_txt)
 
     @server.tool(annotations=read)
-    async def list_drafts(limit: int = 30, offset: int = 0) -> dict:
+    async def list_drafts(limit: int = 30, offset: int = 0) -> dict[str, Any]:
         """List draft metadata without lesson text."""
         require_scope(READ)
         return {"items": await drafts.list_drafts(limit, offset)}
 
     @server.tool(annotations=read)
-    async def get_draft(draft_id: str) -> dict:
+    async def get_draft(draft_id: str) -> dict[str, Any]:
         """Read full draft text, status and current revision."""
         require_scope(READ)
         return await drafts.get_draft(draft_id)
 
     @server.tool(annotations=write)
-    async def update_draft(draft_id: str, expected_revision: int, family_txt: str) -> dict:
+    async def update_draft(draft_id: str, expected_revision: int, family_txt: str) -> dict[str, Any]:
         """Replace the text of an unpublished draft if its revision still matches."""
         require_scope(EDIT)
         return await drafts.update_draft(draft_id, expected_revision, family_txt)
 
     @server.tool(annotations=read)
-    async def validate_draft(draft_id: str) -> dict:
+    async def validate_draft(draft_id: str) -> dict[str, Any]:
         """Validate current draft, report exercise counts, duplicates and publication blockers."""
         require_scope(READ)
         return await drafts.validate_draft(draft_id)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
-    async def publish_draft(draft_id: str, expected_revision: int, confirm: bool) -> dict:
+    async def publish_draft(draft_id: str, expected_revision: int, confirm: bool) -> dict[str, Any]:
         """Publish a validated revision to the learner catalog. Requires explicit user approval and publish scope."""
         require_scope(PUBLISH)
         if not confirm:
