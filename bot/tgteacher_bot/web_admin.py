@@ -36,6 +36,21 @@ WRITE = {
     "attach_audio": tts.attach_audio, "attach_image": media.attach_image, "detach": media.detach_media,
     "extend_subscription": users.extend_user_subscription_pg,
 }
+async def parse_source(source):
+    from tgteacher_bot.utils.family_parser import parse_family_text
+    return parse_family_text(drafts.check_source(source))
+
+
+async def render_source(content):
+    from tgteacher_bot.utils.family_renderer import render_family_txt
+    from tgteacher_bot.db.content_schema import STAGES, stage_key
+    candidate=versions.clean_content(content)
+    if any(t["task_id"] is not None for stage in STAGES for t in candidate[stage_key(stage)]):
+        raise ValueError("New drafts must not reference published task IDs")
+    return {"source":render_family_txt(candidate)}
+
+
+READ.update({"parse_source":parse_source,"render_source":render_source})
 PAGES = {"dashboard","groups","drafts","learners","reviews","media","tts","images","budgets","settings"}
 
 
