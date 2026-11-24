@@ -67,13 +67,19 @@ async def verify_token(raw):
                                    hashlib.sha256(raw.encode()).hexdigest())
 
 
+ORDER_SQL = {"due":"c.due,c.family_id,c.task_id", "weak_first":"CASE WHEN (c.card->>\'difficulty\')::double precision>=7 OR (SELECT r.rating FROM srs_reviews r WHERE r.user_id=c.user_id AND r.family_id=c.family_id AND r.task_id=c.task_id ORDER BY r.id DESC LIMIT 1)<=2 THEN 0 ELSE 1 END,c.due,c.family_id,c.task_id"}
+
+
 async def due_reviews(uid, limit=30, offset=0):
+    from tgteacher_bot.db.learner_preferences import read_preferences
     _page(limit,offset)
     pool = await get_pool()
     async with pool.acquire() as conn:
+        preferences = await read_preferences(conn,uid)
+        order = ORDER_SQL[preferences["review_order"]]
         rows = await conn.fetch(f"""SELECT {COLS}, c.card IS NULL AS unreviewed
             {BASE} WHERE c.user_id=$1 AND c.due<=now() AND {ACCESS}
-            ORDER BY c.due,c.family_id,c.task_id LIMIT $2 OFFSET $3""",uid,limit+1,offset)
+            ORDER BY {order} LIMIT $2 OFFSET $3""",uid,limit+1,offset)
     return _result(rows,limit,offset)
 
 
@@ -132,15 +138,18 @@ async def weak_words(uid, limit=30, offset=0):
 
 
 async def next_review(uid):
+    from tgteacher_bot.db.learner_preferences import read_preferences
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock_shared(847231,1)")
             await lock_user(conn,uid)
             await conn.execute("DELETE FROM srs_review_tickets WHERE user_id=$1",uid)
+            preferences = await read_preferences(conn,uid)
+            order = ORDER_SQL[preferences["review_order"]]
             row = await conn.fetchrow(f"""SELECT {COLS},f.content_version
                 {BASE} WHERE c.user_id=$1 AND c.due<=now() AND {ACCESS}
-                ORDER BY c.due,c.family_id,c.task_id LIMIT 1""",uid)
+                ORDER BY {order} LIMIT 1""",uid)
             if not row:
                 return None
             nonce = uuid.uuid4()
@@ -171,6 +180,7 @@ async def reveal_review(uid,nonce):
 
 
 async def rate_review(uid,nonce,rating):
+    from tgteacher_bot.db.learner_preferences import read_preferences, daily_counts
     if type(rating) is not int or rating not in (1,2,3,4):
         raise ValueError("Rating must be 1–4")
     pool = await get_pool()
@@ -183,11 +193,14 @@ async def rate_review(uid,nonce,rating):
                 raise ValueError("Reveal translation first")
             now = datetime.now(timezone.utc)
             card = Card.from_json(row["card"]) if row["card"] else Card(card_id=row["task_id"],due=now)
-            updated,log = SCHEDULER.review_card(card,Rating(rating),review_datetime=now)
+            preferences = await read_preferences(conn,uid)
+            scheduler = SCHEDULER if preferences["desired_retention"] == 0.9 else Scheduler(desired_retention=preferences["desired_retention"],enable_fuzzing=False)
+            updated,log = scheduler.review_card(card,Rating(rating),review_datetime=now)
             await conn.execute("""UPDATE srs_cards SET card=$4::jsonb,due=$5,revision=revision+1
                 WHERE user_id=$1 AND family_id=$2 AND task_id=$3""",uid,row["family_id"],row["task_id"],updated.to_json(),updated.due)
             await conn.execute("""INSERT INTO srs_reviews(user_id,family_id,task_id,reviewed_at,rating,review_log,before_card,after_card)
                 VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb)""",
                 uid,row["family_id"],row["task_id"],now,rating,log.to_json(),card.to_json(),updated.to_json())
             await conn.execute("DELETE FROM srs_review_tickets WHERE nonce=$1",uuid.UUID(nonce))
-    return {"due":updated.due.isoformat(),"rating":rating}
+            reviewed = await daily_counts(conn,uid)
+    return {"due":updated.due.isoformat(),"rating":rating,"reviewed_today":reviewed,"daily_review_goal":preferences["daily_review_goal"]}
