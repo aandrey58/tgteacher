@@ -19,7 +19,7 @@ class StaticTokenVerifier:
     def __init__(self, reader, editor, publisher, resource="http://127.0.0.1:8000/mcp"):
         self.resource = resource
         tokens = [reader, editor, publisher]
-        if any(not t or len(t) < 32 or not t.isascii() for t in tokens) or len(set(tokens)) != 3:
+        if any(not t or len(t) < 32 or not t.isascii() or t.startswith("tgtl_") for t in tokens) or len(set(tokens)) != 3:
             raise ValueError("Configure three distinct ASCII bearer tokens of at least 32 characters")
         self.tokens = [
             (reader, "reader", [READ]),
@@ -52,12 +52,17 @@ class IntrospectionTokenVerifier:
                 data = response.json()
             audience = data.get("aud", [])
             audience = [audience] if isinstance(audience, str) else audience
+            if not isinstance(audience, list) or not all(isinstance(a,str) for a in audience):
+                return None
             exp = data.get("exp")
             if data.get("active") is not True or self.resource not in audience:
                 return None
-            if not isinstance(exp, int) or exp <= time.time():
+            if type(exp) is not int or exp <= time.time():
                 return None
-            scopes = [s for s in data.get("scope", "").split() if s in (READ, EDIT, PUBLISH)]
+            raw_scope = data.get("scope", "")
+            if not isinstance(raw_scope,str):
+                return None
+            scopes = [s for s in raw_scope.split() if s in (READ, EDIT, PUBLISH)]
             if READ not in scopes:
                 return None
             return AccessToken(token=token, client_id=str(data.get("client_id") or "oauth"),
