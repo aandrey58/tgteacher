@@ -322,6 +322,18 @@ async def _apply(conn, meta, old, content, plan=None, restored_from=None):
                         SELECT 1 FROM user_task_progress a WHERE a.user_id=p.user_id AND a.family_idx=$1
                         AND a.stage_num=t.stage_num AND a.task_id=t.task_id AND a.is_done=1))
             """, fid)
+            if restored_from is not None:
+                # Reinstating an earlier completed version must not award another completion.
+                await conn.execute("""
+                    UPDATE user_family_progress p SET finished=1
+                    FROM family_version_learner_history h
+                    WHERE p.family_idx=$1 AND h.family_id=$1 AND h.version=$2 AND h.user_id=p.user_id
+                      AND h.progress->>'finished'='1'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM active_task_positions t WHERE t.family_idx=$1 AND NOT EXISTS (
+                            SELECT 1 FROM user_task_progress a WHERE a.user_id=p.user_id AND a.family_idx=$1
+                            AND a.stage_num=t.stage_num AND a.task_id=t.task_id AND a.is_done=1))
+                """, fid, restored_from)
         await conn.execute("""
             UPDATE user_last_opened_family_place l SET task_idx=0, stage_num=coalesce((
                 SELECT min(t.stage_num) FROM active_task_positions t WHERE t.family_idx=$1 AND NOT EXISTS (
