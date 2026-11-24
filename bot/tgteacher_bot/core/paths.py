@@ -26,7 +26,7 @@ def families_dir() -> Path:
 
 def help_index_path() -> Path:
     """Path for persistent help index JSON (kept in `bot/` for backward compatibility)."""
-    return bot_dir() / "help_questions_index.json"
+    return Path(os.environ["TGTEACHER_RUNTIME_DIR"]) / "help_questions_index.json" if os.getenv("TGTEACHER_RUNTIME_DIR") else bot_dir() / "help_questions_index.json"
 
 
 def admins_path() -> Path:
