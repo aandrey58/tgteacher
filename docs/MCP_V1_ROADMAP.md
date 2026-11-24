@@ -1,6 +1,6 @@
 # TGTeacher MCP v1.0 — approved roadmap
 
-Target: **45 distinct MCP tools**. Stage 6 establishes 43 implemented tools; the remaining 2 are planned, not exposed as placeholders.
+Target: **45 distinct MCP tools**. Stage 7 establishes all 45 implemented tools; none remain planned, not exposed as placeholders.
 
 | # | Tool | Stage | Status | Purpose |
 |---:|---|---|---|---|
@@ -47,8 +47,8 @@ Target: **45 distinct MCP tools**. Stage 6 establishes 43 implemented tools; the
 | 41 | `get_learning_statistics` | Stage 6 — SRS | implemented | Read authorized learning statistics |
 | 42 | `get_weak_words` | Stage 6 — SRS | implemented | Identify weak vocabulary |
 | 43 | `get_due_reviews` | Stage 6 — SRS | implemented | Get scheduled reviews |
-| 44 | `get_learner_profile` | Stage 7 — Adaptive Learning | planned | Read authorized learner profile |
-| 45 | `update_learning_preferences` | Stage 7 — Adaptive Learning | planned | Update authorized learning preferences |
+| 44 | `get_learner_profile` | Stage 7 — Adaptive Learning | implemented | Read authorized learner profile |
+| 45 | `update_learning_preferences` | Stage 7 — Adaptive Learning | implemented | Update authorized learning preferences |
 
 ## Milestones
 
@@ -63,7 +63,7 @@ Target: **45 distinct MCP tools**. Stage 6 establishes 43 implemented tools; the
 
 ## Contract and security
 
-- Current scopes: content:read, content:edit, content:publish, learner:read. Telegram-linked learner credentials grant only self-access, never content scopes. Content credentials cannot access learner data.
+- Current scopes: content:read, content:edit, content:publish, learner:read, learner:edit. Telegram-linked learner credentials grant only self-access, never content scopes. Content credentials cannot access learner data.
 - No planned tool is exposed before its implementation, authorization and tests are ready.
 - All draft writes require expected_revision. Publish/rollback are explicitly approved and preserve historical task IDs, versions and answers.
 - Stage 3.3 supports draft_kind=new (TXT) and draft_kind=edit (JSON). Stage 1 is vocabulary; stages 2–8 are exercises. Task indices and insertion positions are zero-based, scoped to the specified stage and revision. Reorder accepts a full permutation. New tasks omit task_id; patch cannot change it. Draft deletion uses tombstones, hides drafts from list results and prevents UUID reuse; direct get returns deleted status. Published drafts cannot be deleted. Explicit confirmation is required for deletion and task removal.
@@ -78,3 +78,5 @@ Target: **45 distinct MCP tools**. Stage 6 establishes 43 implemented tools; the
 - Stage 5: OpenRouter dedicated Images API (optional chat surface), KodikRouter and Timeweb Images API. Explicit model/size/tariff profiles, default dry-run estimates, atomic UTC-day image reservations independent of TTS, no automatic retries. Bounded PNG/JPEG/WebP decode and JPEG normalization. Shared audio/image metadata and version links; detach invalidates publication until replacement or task removal. No external image URL fetching. All calls to paid providers in CI are mocked.
 
 - Stage 6: Py-FSRS 6.3.1, 90% target retention, vocabulary cards keyed by learner/family/permanent stage-1 task ID. Existing completed words become due without invented recall ratings; undated legacy answer snapshots stay separate from dated lesson events. Explicit four-point recall ratings in private Telegram chat drive scheduling. One-time, user-bound review tickets fence duplicate callbacks, stale versions, expired sessions and inaccessible groups. Telegram-issued hashed 24-hour learner tokens are rotatable/revocable; all four learner MCP tools derive identity from authentication, not caller parameters. Archive/rollback retains cards and review history. No automatic ratings from recognition exercises.
+
+- Stage 7: revisioned self-owned preferences (daily review goal, FSRS target retention, due/weak-first ordering, self-assessed CEFR). Retention affects subsequent ratings, not existing due dates; weak-first prioritizes due cards only. Personal profile returns actual daily review counts (UTC), due workload and stage weaknesses with at least five dated attempts and accuracy below 70% over 30 days. No automated CEFR diagnosis. Daily goals are guidance, not hard limits. Explicit consent and revision required for writes; learner preference rows cascade on account deletion.
