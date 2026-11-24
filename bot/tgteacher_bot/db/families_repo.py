@@ -25,108 +25,117 @@ async def save_family_to_pg(family_data: dict, folder_name: str = None):
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # Serialize catalog inserts across all bot/MCP processes.
-            await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
-            identity = family_identity(family_data["name"], family_data.get("target"))
-            existing = await conn.fetch("SELECT name, target FROM families")
-            if any(family_identity(row["name"], row["target"]) == identity for row in existing):
-                raise DuplicateFamilyError("Группа с таким названием и уровнем доступа уже существует")
-            # Вставляем основную информацию о группе слов
-            target_value = (family_data.get('target') or 'VIP+FREE')
-            family_id = await conn.fetchval('''
-                INSERT INTO families (name, description, folder_name, target)
-                VALUES ($1, $2, $3, $4)
-                RETURNING id
-            ''', family_data['name'], family_data.get('description'), folder_name, target_value)
+            return await insert_family_on_connection(conn, family_data, folder_name)
 
-            # Вставляем слова для Этапа 1
-            words_to_insert = [
-                (family_id, i, w['word'], w.get('translation'), w.get('example'), w.get('example_translation'), w.get('hint'))
-                for i, w in enumerate(family_data.get('words', []))
-            ]
-            if words_to_insert:
-                await conn.executemany('''
-                    INSERT INTO stage1_words (family_id, word_order, word, translation, example, example_translation, hint)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ''', words_to_insert)
 
-            # Вставляем задания для Этапа 2
-            s2_tasks_to_insert = [
-                (family_id, i, t['sentence'], t['answer'], json.dumps(t['choices']), t.get('explanation'))
-                for i, t in enumerate(family_data.get('stage2_tasks', []))
-            ]
-            if s2_tasks_to_insert:
-                await conn.executemany('''
-                    INSERT INTO stage2_tasks (family_id, task_order, sentence, answer, choices, explanation)
-                    VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-                ''', s2_tasks_to_insert)
+async def insert_family_on_connection(conn, family_data: dict, folder_name: str | None = None):
+    """Insert in caller-owned transaction; used by atomic draft publication."""
+    if not conn.is_in_transaction():
+        raise RuntimeError("Family insertion requires a transaction")
+    validate_family(family_data)
+    # Serialize catalog inserts across all bot/MCP processes.
+    await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
+    identity = family_identity(family_data["name"], family_data.get("target"))
+    existing = await conn.fetch("SELECT name, target FROM families")
+    if any(family_identity(row["name"], row["target"]) == identity for row in existing):
+        raise DuplicateFamilyError("Группа с таким названием и уровнем доступа уже существует")
+    # Вставляем основную информацию о группе слов
+    target_value = (family_data.get('target') or 'VIP+FREE')
+    family_id = await conn.fetchval('''
+        INSERT INTO families (name, description, folder_name, target)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
+    ''', family_data['name'], family_data.get('description'), folder_name, target_value)
 
-            # Вставляем задания для Этапа 4 (аналог Этапа 2)
-            s4_tasks_to_insert = [
-                (family_id, i, t['sentence'], t['answer'], json.dumps(t['choices']), t.get('explanation'))
-                for i, t in enumerate(family_data.get('stage4_tasks', []))
-            ]
-            if s4_tasks_to_insert:
-                await conn.executemany('''
-                    INSERT INTO stage4_tasks (family_id, task_order, sentence, answer, choices, explanation)
-                    VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-                ''', s4_tasks_to_insert)
+    # Вставляем слова для Этапа 1
+    words_to_insert = [
+        (family_id, i, w['word'], w.get('translation'), w.get('example'), w.get('example_translation'), w.get('hint'))
+        for i, w in enumerate(family_data.get('words', []))
+    ]
+    if words_to_insert:
+        await conn.executemany('''
+            INSERT INTO stage1_words (family_id, word_order, word, translation, example, example_translation, hint)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ''', words_to_insert)
 
-            # Вставляем задания для Этапа 3
-            s3_tasks_to_insert = [
-                (family_id, i, t['word'], t['definition'], t.get('explanation'), json.dumps(t.get('choices', [])))
-                for i, t in enumerate(family_data.get('stage3_tasks', []))
-            ]
-            if s3_tasks_to_insert:
-                await conn.executemany('''
-                    INSERT INTO stage3_tasks (family_id, task_order, word, definition, explanation, choices)
-                    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-                ''', s3_tasks_to_insert)
+    # Вставляем задания для Этапа 2
+    s2_tasks_to_insert = [
+        (family_id, i, t['sentence'], t['answer'], json.dumps(t['choices']), t.get('explanation'))
+        for i, t in enumerate(family_data.get('stage2_tasks', []))
+    ]
+    if s2_tasks_to_insert:
+        await conn.executemany('''
+            INSERT INTO stage2_tasks (family_id, task_order, sentence, answer, choices, explanation)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+        ''', s2_tasks_to_insert)
 
-            # Вставляем задания для Этапа 5 (картинка + ответ)
-            s5_tasks_to_insert = [
-                (family_id, i, t.get('image'), t['answer'], json.dumps(t.get('alternatives', [])), t.get('explanation'))
-                for i, t in enumerate(family_data.get('stage5_tasks', []))
-            ]
-            if s5_tasks_to_insert:
-                await conn.executemany('''
-                    INSERT INTO stage5_tasks (family_id, task_order, image, answer, alternatives, explanation)
-                    VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-                ''', s5_tasks_to_insert)
+    # Вставляем задания для Этапа 4 (аналог Этапа 2)
+    s4_tasks_to_insert = [
+        (family_id, i, t['sentence'], t['answer'], json.dumps(t['choices']), t.get('explanation'))
+        for i, t in enumerate(family_data.get('stage4_tasks', []))
+    ]
+    if s4_tasks_to_insert:
+        await conn.executemany('''
+            INSERT INTO stage4_tasks (family_id, task_order, sentence, answer, choices, explanation)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+        ''', s4_tasks_to_insert)
 
-            # Вставляем задания для Этапа 6
-            s6_tasks_to_insert = [
-                (family_id, i, t['word'], json.dumps(t['synonyms']), json.dumps(t['wrong_synonyms']), t.get('explanation'))
-                for i, t in enumerate(family_data.get('stage6_tasks', []))
-            ]
-            if s6_tasks_to_insert:
-                await conn.executemany('''
-                    INSERT INTO stage6_tasks (family_id, task_order, word, synonyms, wrong_synonyms, explanation)
-                    VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
-                ''', s6_tasks_to_insert)
+    # Вставляем задания для Этапа 3
+    s3_tasks_to_insert = [
+        (family_id, i, t['word'], t['definition'], t.get('explanation'), json.dumps(t.get('choices', [])))
+        for i, t in enumerate(family_data.get('stage3_tasks', []))
+    ]
+    if s3_tasks_to_insert:
+        await conn.executemany('''
+            INSERT INTO stage3_tasks (family_id, task_order, word, definition, explanation, choices)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        ''', s3_tasks_to_insert)
 
-            # Вставляем задания для Этапа 7 (аудио + выбор)
-            s7_tasks_to_insert = [
-                (family_id, i, t.get('task'), t.get('audio'), t['answer'], json.dumps(t.get('choices', [])), t.get('explanation'))
-                for i, t in enumerate(family_data.get('stage7_tasks', []))
-            ]
-            if s7_tasks_to_insert:
-                await conn.executemany('''
-                    INSERT INTO stage7_tasks (family_id, task_order, task, audio, answer, choices, explanation)
-                    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-                ''', s7_tasks_to_insert)
+    # Вставляем задания для Этапа 5 (картинка + ответ)
+    s5_tasks_to_insert = [
+        (family_id, i, t.get('image'), t['answer'], json.dumps(t.get('alternatives', [])), t.get('explanation'))
+        for i, t in enumerate(family_data.get('stage5_tasks', []))
+    ]
+    if s5_tasks_to_insert:
+        await conn.executemany('''
+            INSERT INTO stage5_tasks (family_id, task_order, image, answer, alternatives, explanation)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+        ''', s5_tasks_to_insert)
 
-            # Вставляем задания для Этапа 8
-            s8_tasks_to_insert = [
-                (family_id, i, t['text'], json.dumps(t['answers']), json.dumps(t.get('explanations', [])), t.get('equal'))
-                for i, t in enumerate(family_data.get('stage8_tasks', []))
-            ]
-            if s8_tasks_to_insert:
-                await conn.executemany('''
-                    INSERT INTO stage8_tasks (family_id, task_order, text, answers, explanations, equal)
-                    VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
-                ''', s8_tasks_to_insert)
-            return family_id
+    # Вставляем задания для Этапа 6
+    s6_tasks_to_insert = [
+        (family_id, i, t['word'], json.dumps(t['synonyms']), json.dumps(t['wrong_synonyms']), t.get('explanation'))
+        for i, t in enumerate(family_data.get('stage6_tasks', []))
+    ]
+    if s6_tasks_to_insert:
+        await conn.executemany('''
+            INSERT INTO stage6_tasks (family_id, task_order, word, synonyms, wrong_synonyms, explanation)
+            VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+        ''', s6_tasks_to_insert)
+
+    # Вставляем задания для Этапа 7 (аудио + выбор)
+    s7_tasks_to_insert = [
+        (family_id, i, t.get('task'), t.get('audio'), t['answer'], json.dumps(t.get('choices', [])), t.get('explanation'))
+        for i, t in enumerate(family_data.get('stage7_tasks', []))
+    ]
+    if s7_tasks_to_insert:
+        await conn.executemany('''
+            INSERT INTO stage7_tasks (family_id, task_order, task, audio, answer, choices, explanation)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+        ''', s7_tasks_to_insert)
+
+    # Вставляем задания для Этапа 8
+    s8_tasks_to_insert = [
+        (family_id, i, t['text'], json.dumps(t['answers']), json.dumps(t.get('explanations', [])), t.get('equal'))
+        for i, t in enumerate(family_data.get('stage8_tasks', []))
+    ]
+    if s8_tasks_to_insert:
+        await conn.executemany('''
+            INSERT INTO stage8_tasks (family_id, task_order, text, answers, explanations, equal)
+            VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+        ''', s8_tasks_to_insert)
+    return family_id
+
 
 async def get_all_families_meta_pg() -> List[Dict[str, Any]]:
     pool = await get_pool()
