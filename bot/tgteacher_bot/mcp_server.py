@@ -32,7 +32,7 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         instructions="Manage English lesson content. Drafts are not visible to learners. Validate the current revision before requesting approval to publish. Never publish without the user's explicit instruction.",
         stateless_http=True, json_response=True,
         token_verifier=verifier,
-        auth=AuthSettings(issuer_url=issuer, resource_server_url=resource, required_scopes=[READ]),
+        auth=AuthSettings(issuer_url=issuer, resource_server_url=resource, required_scopes=[READ], validate_token_resource=True),
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=[parsed.netloc, "127.0.0.1:*", "localhost:*"],
