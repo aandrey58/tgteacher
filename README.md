@@ -178,3 +178,56 @@ python -m unittest discover -s tests -v
 - `python bot/scripts/add_test_users.py` — добавление тестовых пользователей.
 - `python bot/scripts/seed_payments.py` — генерация тестовых платежей.
 - `python bot/scripts/clear_families.py` — удаление всех семей слов из базы данных (требуется подтверждение).
+
+
+## MCP Server (Stage 3)
+
+MCP работает отдельным процессом с той же PostgreSQL. Streamable HTTP, endpoint `/mcp`.
+Запуск локально после установки requirements:
+
+```bash
+# Выполнить из корня репозитория (Linux/macOS)
+export PYTHONPATH=bot
+export TGTEACHER_MCP_READ_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export TGTEACHER_MCP_EDIT_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export TGTEACHER_MCP_PUBLISH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+python -m tgteacher_bot.mcp_server
+```
+
+Задайте обычные параметры PostgreSQL через окружение. Секреты никогда не коммитить.
+По умолчанию сервер слушает 127.0.0.1:8000; для удалённого доступа нужен HTTPS reverse proxy,
+точный `TGTEACHER_MCP_RESOURCE_URL=https://your-host/mcp` и сохранение Host заголовка.
+
+### Авторизация
+
+- `static` (по умолчанию): три разных Bearer-токена (не менее 32 ASCII символов).
+  Читатель — content:read, редактор — read+edit, издатель — read+edit+publish.
+  Это режим для доверенного MCP-клиента, умеющего передавать Authorization; он не является OAuth-сервером.
+- `oauth`: внешняя OAuth-служба с RFC 7662 introspection, выдающая access tokens с aud, exp и scopes.
+  Задать TGTEACHER_MCP_AUTH_MODE=oauth, TGTEACHER_MCP_ISSUER_URL, TGTEACHER_MCP_RESOURCE_URL,
+  TGTEACHER_MCP_INTROSPECTION_URL (HTTPS), TGTEACHER_MCP_CLIENT_ID, TGTEACHER_MCP_CLIENT_SECRET.
+  Audience должен совпадать с полным URL ресурса. Требуется настроить регистрацию клиентов,
+  выдачу токенов и consent на стороне OAuth-службы. Реальный ChatGPT OAuth flow пока не проверен.
+
+### Инструменты MCP
+
+| Tool | Scope |
+| --- | --- |
+| list_families, get_family, search_words, get_content_format | content:read |
+| list_drafts, get_draft, validate_draft | content:read |
+| create_draft, update_draft | content:edit |
+| publish_draft | content:publish |
+
+1. Получить формат и проверить существующие слова.
+2. Создать черновик (UUID клиента и TXT). Повтор с тем же UUID и содержимым безопасен.
+3. Получить validate_draft; исправить содержимое через update_draft с expected_revision.
+4. После явного подтверждения пользователя вызвать publish_draft с текущей ревизией и confirm=true.
+   Повторная публикация этой ревизии возвращает прежний ID; конкурентная запись защищена транзакцией.
+   Черновики и исходники остаются в БД, опубликованные группы доступны из Telegram.
+   После удаления опубликованной группы через админку повтор запроса не восстанавливает её.
+5. Опубликованные группы не редактируются через MCP на этом этапе, чтобы не ломать прогресс пользователей.
+   Черновики могут содержать задания с медиа, но их публикация пока заблокирована до Stage 4/5.
+
+Доступ к черновикам общий для доверенных администраторов этого экземпляра; это не multi-tenant сервис.
+Текст ограничен 128 KiB; валидация структурная, а не экспертная проверка английского.
+Тесты PostgreSQL включаются через TGTEACHER_TEST_DSN; GitHub Actions запускает их с PostgreSQL 16.
