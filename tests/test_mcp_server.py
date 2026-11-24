@@ -87,8 +87,10 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         result = self.rpc("tools/list").json()["result"]
         names = {tool["name"] for tool in result["tools"]}
-        self.assertEqual(len(names), 10)
+        self.assertEqual(len(names), 12)
         self.assertIn("publish_draft", names)
+        self.assertIn("archive_family", names)
+        self.assertIn("restore_family", names)
         self.assertIn("search_words", names)
         template = self.call("get_content_format", {}, READER)
         self.assertFalse(template.get("isError", False), template)
@@ -161,6 +163,22 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(words[0]["family_id"], published["family_id"])
         family = invoke("get_family", {"family_id": published["family_id"]}, READER)
         self.assertEqual(family["words"][0]["word"], "ticket")
+        self.assertEqual(len(invoke("list_families", {}, READER)["items"]), 1)
+        archive_args = {"family_id": published["family_id"], "confirm": True}
+        self.assertTrue(self.call("archive_family", archive_args, EDITOR)["isError"])
+        self.assertTrue(self.call("archive_family", {**archive_args, "confirm": False}, PUBLISHER)["isError"])
+        archived = invoke("archive_family", archive_args, PUBLISHER)
+        self.assertTrue(archived["archived"])
+        self.assertEqual(invoke("list_families", {}, READER)["items"], [])
+        self.assertEqual(len(invoke("list_families", {"status": "archived"}, READER)["items"]), 1)
+        self.assertEqual(invoke("search_words", {"query": "ticket"}, READER)["items"], [])
+        self.assertEqual(len(invoke("search_words", {"query": "ticket", "include_archived": True}, READER)["items"]), 1)
+        self.assertTrue(invoke("get_family", {"family_id": published["family_id"]}, READER)["archived_at"])
+        self.assertEqual(invoke("publish_draft", {"draft_id": ident, "expected_revision": 1, "confirm": True}, PUBLISHER)["status"], "archived")
+        self.assertTrue(self.call("restore_family", archive_args, EDITOR)["isError"])
+        restored = invoke("restore_family", archive_args, PUBLISHER)
+        self.assertFalse(restored["archived"])
+        self.assertEqual(restored["family_id"], published["family_id"])
         self.assertEqual(len(invoke("list_families", {}, READER)["items"]), 1)
 
     def test_foreign_origin_rejected(self):
