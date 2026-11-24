@@ -125,7 +125,7 @@ class HTTPTests(unittest.TestCase):
     @unittest.skipUnless(os.getenv("TGTEACHER_TEST_DSN"), "requires isolated PostgreSQL")
     def test_http_publish_and_search_real_database(self):
         import asyncpg
-        from tgteacher_bot.db import user_repo, families_repo, content_versions
+        from tgteacher_bot.db import user_repo, families_repo, content_versions, srs_repo
         from tgteacher_bot import mcp_server
         dsn = os.environ["TGTEACHER_TEST_DSN"]
         schema = "test_" + uuid.uuid4().hex
@@ -151,7 +151,7 @@ class HTTPTests(unittest.TestCase):
                 await admin.close()
 
         self.addCleanup(self.client.portal.call, cleanup)
-        for module in (user_repo, families_repo, drafts, mcp_server, content_versions):
+        for module in (user_repo, families_repo, drafts, mcp_server, content_versions, srs_repo):
             p = patch.object(module, "get_pool", new=AsyncMock(return_value=pool))
             p.start()
             self.addCleanup(p.stop)
@@ -174,6 +174,24 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(words[0]["family_id"], published["family_id"])
         family = invoke("get_family", {"family_id": published["family_id"]}, READER)
         self.assertEqual(family["words"][0]["word"], "ticket")
+        async def learners():
+            await user_repo.add_or_update_user_pg(111,"first","First","")
+            await user_repo.add_or_update_user_pg(222,"second","Second","")
+            await user_repo.set_task_done_pg(111,published["family_id"],1,0)
+            return await srs_repo.issue_token(111), await srs_repo.issue_token(222)
+        first, second = self.client.portal.call(learners)
+        self.assertEqual(invoke("get_due_reviews",{},first)["items"][0]["word"],"ticket")
+        self.assertEqual(invoke("get_due_reviews",{},second)["items"],[])
+        self.assertEqual(invoke("get_learning_progress",{},first)["items"][0]["completed_tasks"],1)
+        self.assertEqual(invoke("get_learning_progress",{},second)["items"],[])
+        self.assertEqual(invoke("get_learning_statistics",{},first)["due_cards"],1)
+        self.assertEqual(invoke("get_weak_words",{},first)["items"],[])
+        self.assertTrue(self.call("get_family",{"family_id":published["family_id"]},first)["isError"])
+        self.assertTrue(self.call("list_media",{},first)["isError"])
+        self.assertTrue(self.call("create_draft",{"draft_id":str(uuid.uuid4()),"family_txt":SOURCE},first)["isError"])
+        self.client.portal.call(srs_repo.revoke_token,111)
+        self.assertEqual(self.rpc("tools/list",token=first).status_code,401)
+
         self.assertEqual(len(invoke("list_families", {}, READER)["items"]), 1)
         archive_args = {"family_id": published["family_id"], "confirm": True}
         self.assertTrue(self.call("archive_family", archive_args, EDITOR)["isError"])
