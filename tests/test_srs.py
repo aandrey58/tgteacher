@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bot"))
 from fsrs import Card, Rating
+from tgteacher_bot.db import learner_preferences as prefs
 from tgteacher_bot.db import srs_repo as srs, srs_schema, content_versions as versions, families_repo as families, user_repo as users
 from tgteacher_bot.mcp_auth import StaticTokenVerifier, LearnerTokenVerifier, LEARNER_READ, LEARNER_EDIT
 from tgteacher_bot.handlers.user import reviews
@@ -72,7 +73,7 @@ class SRSDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(admin.execute,f'DROP SCHEMA "{schema}" CASCADE')
         self.pool = await asyncpg.create_pool(dsn,min_size=1,max_size=4,server_settings={"search_path":schema})
         self.addAsyncCleanup(self.pool.close)
-        for module in (srs,versions,families,users):
+        for module in (srs,versions,families,users,prefs):
             p = patch.object(module,"get_pool",new=AsyncMock(return_value=self.pool))
             p.start()
             self.addCleanup(p.stop)
@@ -193,3 +194,46 @@ class SRSDatabaseTests(unittest.IsolatedAsyncioTestCase):
             for table in ("srs_cards","srs_reviews","srs_review_tickets","learner_answer_events"):
                 self.assertEqual(await conn.fetchval(f"SELECT count(*) FROM {table} WHERE user_id=11"),0)
         self.assertEqual((await srs.due_reviews(22))["items"][0]["word"],"bag")
+
+
+    async def test_adaptive_profile_and_revision_conflict(self):
+        await self.enroll()
+        for _ in range(5):
+            await users.set_stage2_answer_pg(11,self.fid,0,"hat",False)
+        self.assertEqual((await prefs.profile(11))["weak_stages"][0]["stage_num"],2)
+        initial=await prefs.profile(11)
+        self.assertEqual(initial["suggested_review_count"],1)
+        results=await asyncio.gather(prefs.update_preferences(11,0,{"daily_review_goal":5}),prefs.update_preferences(11,0,{"daily_review_goal":10}),return_exceptions=True)
+        self.assertEqual(sum(isinstance(r,dict) for r in results),1)
+        self.assertEqual(sum(isinstance(r,ValueError) for r in results),1)
+        self.assertEqual((await prefs.profile(22))["preferences"]["revision"],0)
+        for invalid in ({"user_id":22},{"desired_retention":1.0},{"daily_review_goal":True},{"self_assessed_level":"expert"},{"review_order":"random"}):
+            with self.assertRaises(ValueError):
+                await prefs.update_preferences(11,1,invalid)
+
+    async def test_preferences_change_scheduler_and_due_priority(self):
+        await self.enroll(11,0)
+        await self.enroll(11,1)
+        ticket=await srs.next_review(11)
+        await srs.reveal_review(11,ticket["nonce"])
+        await srs.rate_review(11,ticket["nonce"],1)
+        async with self.pool.acquire() as conn:
+            # Make the weak card due later than the unreviewed card, both overdue.
+            await conn.execute("UPDATE srs_cards SET due=now()-interval '1 minute' WHERE user_id=11 AND card IS NOT NULL")
+            await conn.execute("UPDATE srs_cards SET due=now()-interval '1 day' WHERE user_id=11 AND card IS NULL")
+        self.assertEqual((await srs.due_reviews(11))["items"][0]["word"],"bag")
+        await prefs.update_preferences(11,0,{"review_order":"weak_first","desired_retention":0.95,"daily_review_goal":5})
+        self.assertEqual((await srs.due_reviews(11))["items"][0]["word"],"ticket")
+        ticket=await srs.next_review(11)
+        self.assertEqual(ticket["word"],"ticket")
+        await srs.reveal_review(11,ticket["nonce"])
+        from fsrs import Scheduler
+        with patch.object(srs,"Scheduler",wraps=Scheduler) as scheduler:
+            result=await srs.rate_review(11,ticket["nonce"],3)
+            scheduler.assert_called_once_with(desired_retention=0.95,enable_fuzzing=False)
+        self.assertEqual(result["reviewed_today"],2)
+        self.assertEqual(result["daily_review_goal"],5)
+        self.assertEqual((await prefs.profile(11))["remaining_daily_goal"],3)
+        await users.delete_user_and_progress_pg(11)
+        async with self.pool.acquire() as conn:
+            self.assertEqual(await conn.fetchval("SELECT count(*) FROM learner_preferences WHERE user_id=11"),0)
