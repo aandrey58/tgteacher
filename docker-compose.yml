@@ -29,6 +29,8 @@ services:
       POSTGRES_PORT: "5432"
       TGTEACHER_ADMINS_PATH: /app/runtime_cache/admins.txt
       TGTEACHER_RUNTIME_DIR: /app/runtime_cache
+      TGTEACHER_LEGACY_ADMIN: ${TGTEACHER_LEGACY_ADMIN:-1}
+      TGTEACHER_WEB_ADMIN_URL: ${TGTEACHER_WEB_ADMIN_URL:-}
     volumes:
       - ./families:/app/families
       - ./bot/exports:/app/bot/exports
@@ -59,6 +61,29 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+
+  admin:
+    profiles: ["web"]
+    build:
+      context: .
+      dockerfile: admin-web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - ./mcp.env
+      - ./admin.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-tgteacher}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+    ports:
+      - "127.0.0.1:${ADMIN_HOST_PORT:-8080}:8080"
+    volumes:
+      - ./families:/app/families:ro
 
 volumes:
   postgres_data:
