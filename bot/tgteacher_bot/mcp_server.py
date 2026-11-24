@@ -153,6 +153,12 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         return await versions.create_edit_draft(family_id, draft_id, expected_version)
 
     @server.tool(annotations=read)
+    async def list_edit_drafts(family_id: int | None = None, limit: int = 30, offset: int = 0) -> dict[str, Any]:
+        """List edit drafts across all groups or filter by family ID."""
+        require_scope(READ)
+        return await versions.list_edit_drafts(family_id, limit, offset)
+
+    @server.tool(annotations=read)
     async def get_edit_draft(draft_id: str) -> dict[str, Any]:
         """Read an edit draft including its current revision and complete content."""
         require_scope(READ)
