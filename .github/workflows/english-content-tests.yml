@@ -60,6 +60,8 @@ jobs:
           echo 'TGTEACHER_MCP_READ_TOKEN=rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr' >> mcp.env
           echo 'TGTEACHER_MCP_EDIT_TOKEN=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' >> mcp.env
           echo 'TGTEACHER_MCP_PUBLISH_TOKEN=pppppppppppppppppppppppppppppppp' >> mcp.env
+          cp admin.env.example admin.env
+          echo 'WEB_ADMIN_SECRET=ci-only-web-admin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' >> admin.env
           mkdir -p runtime_cache bot/exports
           docker compose config --quiet
       - name: Build release containers
@@ -72,6 +74,25 @@ jobs:
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' http://127.0.0.1:8000/mcp)" = 401
           curl --fail --silent -H 'Authorization: Bearer rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' http://127.0.0.1:8000/mcp | python -c 'import sys,json; assert len(json.load(sys.stdin)["result"]["tools"])==45'
           docker compose run --rm --no-deps bot python -c 'from tgteacher_bot.core.app import build_application; a=build_application(); assert a.job_queue is not None; assert a.handlers'
+      - name: Build and start React admin
+        run: |
+          docker compose --profile web build admin
+          docker compose --profile web up -d admin
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8080/ >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8080/ | grep 'TGTeacher Admin'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/groups)" = 401
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify React desktop and mobile flows in Chromium
+        working-directory: admin-web
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          npx playwright test
       - name: Cleanup
         if: always()
-        run: docker compose down -v
+        run: docker compose --profile web down -v
