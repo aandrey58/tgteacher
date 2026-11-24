@@ -71,7 +71,12 @@ async def rate(update,context):
         await query.answer("Карточка уже оценена или устарела. Начните повторение заново.",show_alert=True)
         return
     await query.answer()
-    await _display(update,"Оценка сохранена. Следующее повторение: "+result["due"][:16].replace("T"," ")+" UTC.",MENU)
+    goal = result["daily_review_goal"]
+    count = result["reviewed_today"]
+    progress = f"\n\nСегодня: {count}/{goal} повторений (UTC)."
+    if count >= goal:
+        progress += "\nДневная цель выполнена! Можно продолжить по желанию."
+    await _display(update,"Оценка сохранена. Следующее повторение: "+result["due"][:16].replace("T"," ")+" UTC."+progress,MENU)
 
 
 async def issue_token(update,context):
