@@ -208,78 +208,38 @@ async def _send_photo_and_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
     photo_message = None
     if image_name:
+        from tgteacher_bot.db.image_repo import get_image_bytes, managed_id
         cache_key = f"{family_meta.get('folder_name') or ''}/{image_name}"
         cache_entry = global_photo_cache.get(cache_key)
-        cached_id = cache_entry['file_id'] if isinstance(cache_entry, dict) else None
-        cached_unique = cache_entry.get('file_unique_id') if isinstance(cache_entry, dict) else None
-        
-        # Поиск файла без учёта регистра
-        family_dir = os.path.join(_families_root_dir(), family_meta['folder_name'] or '')
-        image_path = find_file_case_insensitive(family_dir, image_name)
-        
-        if not image_path:
-            logger.warning(f"[stage5] Файл изображения '{image_name}' не найден в папке '{family_dir}'")
-        else:
-            _log_image_diagnostics(image_path)
-            
-        if image_path:
+        cached_id = cache_entry.get('file_id') if isinstance(cache_entry, dict) else None
+        if cached_id:
             try:
-                if cached_id:
-                    tmp_msg = await bot.send_photo(chat_id=chat_id, photo=cached_id)
-                    if tmp_msg and tmp_msg.photo:
-                        p = tmp_msg.photo[-1]
-                        file_size = getattr(p, 'file_size', None)
-                        file_unique_id = getattr(p, 'file_unique_id', None)
-                        if (file_size is not None and file_size < 1024) or (cached_unique and file_unique_id and cached_unique != file_unique_id):
-                            logger.warning(f"[stage5] cached file_id для '{image_name}' битый/не совпал (size={file_size}, cached_unique_match={cached_unique == file_unique_id}). Пере-заливаю.")
-                            global_photo_cache.pop(cache_key, None)
-                            # Удаляем битое сообщение, чтобы у пользователя не оставалось мусора
-                            try:
-                                await bot.delete_message(chat_id=chat_id, message_id=tmp_msg.message_id)
-                            except Exception:
-                                pass
-                        else:
-                            photo_message = tmp_msg
-                if photo_message is None:
-                    # Пытаемся отправить исходный файл как фото с явным именем
+                photo_message = await bot.send_photo(chat_id=chat_id, photo=cached_id)
+            except Exception:
+                global_photo_cache.pop(cache_key, None)
+        if photo_message is None:
+            data = await get_image_bytes(image_name)
+            if data is not None:
+                try:
+                    photo_message = await bot.send_photo(chat_id=chat_id, photo=InputFile(data, filename=image_name))
+                except Exception:
+                    logger.warning("[stage5] Managed image delivery failed")
+            elif not managed_id(image_name):
+                family_dir = os.path.join(_families_root_dir(), family_meta['folder_name'] or '')
+                image_path = find_file_case_insensitive(family_dir, image_name)
+                if image_path:
                     try:
                         with open(image_path, 'rb') as f:
                             photo_message = await bot.send_photo(chat_id=chat_id, photo=InputFile(f, filename=os.path.basename(image_path)))
-                        if photo_message and photo_message.photo:
-                            p = photo_message.photo[-1]
-                            global_photo_cache[cache_key] = {
-                                'file_id': p.file_id,
-                                'file_unique_id': getattr(p, 'file_unique_id', None),
-                            }
-                    except Exception as e_up:
-                        logger.warning(f"[stage5] Ошибка отправки фото файлом '{image_name}': {type(e_up).__name__}: {e_up}")
-                        # Конвертим и пробуем снова
-                        conv_msg = await _send_photo_converted(bot, chat_id, image_path)
-                        if conv_msg and conv_msg.photo:
-                            photo_message = conv_msg
-                            try:
-                                p = conv_msg.photo[-1]
-                                global_photo_cache[cache_key] = {
-                                    'file_id': p.file_id,
-                                    'file_unique_id': getattr(p, 'file_unique_id', None),
-                                }
-                            except Exception:
-                                pass
-                        else:
-                            # Фоллбек на документ с явным именем
-                            try:
-                                with open(image_path, 'rb') as f:
-                                    photo_message = await bot.send_document(chat_id=chat_id, document=InputFile(f, filename=os.path.basename(image_path)))
-                            except Exception as e2:
-                                logger.warning(f"[stage5] Ошибка отправки документа '{image_name}': {type(e2).__name__}: {e2}")
-            except Exception as e:
-                logger.warning(f"[stage5] Ошибка отправки фото '{image_name}' (cached or upload): {type(e).__name__}: {e}")
-                # Фоллбек на документ с явным именем
-                try:
-                    with open(image_path, 'rb') as f:
-                        photo_message = await bot.send_document(chat_id=chat_id, document=InputFile(f, filename=os.path.basename(image_path)))
-                except Exception as e3:
-                    logger.warning(f"[stage5] Ошибка отправки документа '{image_name}' во внешнем except: {type(e3).__name__}: {e3}")
+                    except Exception:
+                        photo_message = await _send_photo_converted(bot, chat_id, image_path)
+            if photo_message and getattr(photo_message, 'photo', None):
+                p = photo_message.photo[-1]
+                global_photo_cache[cache_key] = {'file_id': p.file_id, 'file_unique_id': getattr(p, 'file_unique_id', None)}
+    if not photo_message:
+        st5['awaiting_input'] = False
+        await bot.send_message(chat_id=chat_id, text="Изображение недоступно. Откройте группу повторно позже.")
+        return
     # Кэш file_id больше не сохраняем в состояние этапа; используем глобальный кэш
 
     if photo_message:
