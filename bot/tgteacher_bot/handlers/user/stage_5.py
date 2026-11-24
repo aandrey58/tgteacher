@@ -649,6 +649,9 @@ async def stage5_text_answer_handler(update: Update, context: ContextTypes.DEFAU
     await mark_user_active_if_needed(user_id, context)
 
     family_id = st5['family_idx']
+    if not await get_family_data_pg(family_id):
+        await update.message.reply_text('Группа в архиве или недоступна. Прогресс сохранён.')
+        return
     tasks = await get_stage5_tasks_pg(family_id)
     idx_display = st5['task_idx']
     if idx_display >= len(tasks):
