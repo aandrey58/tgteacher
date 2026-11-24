@@ -213,7 +213,13 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             pass
 
 
+async def _refresh_catalog_callback(update, context):
+    from tgteacher_bot.utils.families_data import refresh_families_meta
+    await refresh_families_meta()
+
+
 def _register_handlers(application: Application):
+    application.add_handler(CallbackQueryHandler(_refresh_catalog_callback), group=-2)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
 
@@ -229,6 +235,8 @@ def _register_handlers(application: Application):
 
 async def _post_startup(application: Application):
     await init_db_pg()
+    from tgteacher_bot.utils.families_data import refresh_families_meta
+    await refresh_families_meta()
     try:
         await init_system_snapshots_pg()
     except Exception:
