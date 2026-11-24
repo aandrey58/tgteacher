@@ -41,6 +41,17 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
             allowed_origins=[origin, "http://127.0.0.1:*", "http://localhost:*"],
         ),
     )
+    @server.custom_route("/healthz", methods=["GET"])
+    async def health(request):
+        from starlette.responses import JSONResponse
+        try:
+            pool = await get_pool()
+            async with pool.acquire(timeout=2) as conn:
+                await conn.fetchval("SELECT 1 FROM content_schema_migrations WHERE name='srs_v1'", timeout=2)
+            return JSONResponse({"status":"ok"})
+        except Exception:
+            return JSONResponse({"status":"unavailable"},status_code=503)
+
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     write = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 
