@@ -88,7 +88,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         result = self.rpc("tools/list").json()["result"]
         names = {tool["name"] for tool in result["tools"]}
-        self.assertEqual(len(names), 33)
+        self.assertEqual(len(names), 39)
         roadmap = (ROOT / "docs" / "MCP_V1_ROADMAP.md").read_text(encoding="utf-8")
         rows = re.findall(r"^\| \d+ \| `(\w+)` \| .*? \| (implemented|planned) \|", roadmap, re.M)
         self.assertEqual(len(rows), 45)
@@ -265,6 +265,30 @@ class HTTPTests(unittest.TestCase):
             attach.assert_not_awaited()
             self.assertFalse(self.call("attach_audio", args, EDITOR).get("isError", False))
             attach.assert_awaited_once()
+
+    def test_image_permissions_and_estimates(self):
+        from tgteacher_bot.db import image_repo, media_repo
+        item = {"provider": "openrouter", "model": "vendor/model", "prompt": "apple"}
+        for name, args in (("generate_image", item), ("batch_generate_images", {"items": [item]})):
+            with patch.object(image_repo, "generate_batch", new=AsyncMock(return_value={"items": []})) as generate:
+                self.assertFalse(self.call(name, args, READER).get("isError", False))
+                self.assertTrue(self.call(name, {**args, "estimate_only": False, "confirm": True}, READER)["isError"])
+                self.assertTrue(self.call(name, {**args, "estimate_only": False}, EDITOR)["isError"])
+                self.assertFalse(self.call(name, {**args, "estimate_only": False, "confirm": True, "max_cost_microusd": 100}, EDITOR).get("isError", False))
+                self.assertEqual(generate.await_count, 2)
+        base = {"draft_kind":"edit","draft_id":str(uuid.uuid4()),"expected_revision":1,"task_index":0}
+        for name,args in (("attach_image",{**base,"asset_id":"a"*64}),("detach_media",{**base,"kind":"image","confirm":True})):
+            with patch.object(media_repo,name,new=AsyncMock(return_value={"revision":2})) as call:
+                self.assertTrue(self.call(name,args,READER)["isError"])
+                if "confirm" in args:
+                    self.assertTrue(self.call(name,{**args,"confirm":False},EDITOR)["isError"])
+                call.assert_not_awaited()
+                self.assertFalse(self.call(name,args,EDITOR).get("isError",False))
+                call.assert_awaited_once()
+        with patch.object(media_repo,"list_media",new=AsyncMock(return_value={"items":[]})):
+            self.assertFalse(self.call("list_media",{},READER).get("isError",False))
+        with patch.object(media_repo,"get_media",new=AsyncMock(return_value={"kind":"image"})):
+            self.assertFalse(self.call("get_media",{"kind":"image","asset_id":"a"*64},READER).get("isError",False))
 
     def test_foreign_origin_rejected(self):
         self.assertNotEqual(self.rpc("tools/list", origin="https://evil.example").status_code, 200)
