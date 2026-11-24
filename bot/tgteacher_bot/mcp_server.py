@@ -12,6 +12,7 @@ from mcp.types import ToolAnnotations
 
 from tgteacher_bot.db import drafts_repo as drafts, families_repo as families, content_versions as versions, content_operations as operations
 from tgteacher_bot.db.pool import get_pool
+from tgteacher_bot.db import tts_repo as tts
 from tgteacher_bot.db.user_repo import init_db_pg
 from tgteacher_bot.mcp_auth import READ, EDIT, PUBLISH, require_scope, verifier_from_env
 
@@ -90,7 +91,7 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         require_scope(READ)
         from tgteacher_bot.core.paths import families_dir
         return {"format": (families_dir() / "family_example.txt").read_text(encoding="utf-8"),
-                "note": "All stages except stage 1 are optional. Media publication requires later integration."}
+                "note": "All stages except stage 1 are optional. Stage 7 audio can be generated and attached; new images require Stage 5."}
 
     @server.tool(annotations=write)
     async def create_draft(draft_id: str, family_txt: str) -> dict[str, Any]:
@@ -247,6 +248,48 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         """Reorder one draft stage using a complete permutation of zero-based positions in the expected revision. Existing IDs are preserved."""
         require_scope(EDIT)
         return await operations.reorder_tasks(draft_kind, draft_id, expected_revision, stage, order)
+
+    @server.tool(annotations=read)
+    async def list_tts_providers() -> dict[str, Any]:
+        """List configured providers, conservative byte-based rates and daily budget; no secrets."""
+        require_scope(READ)
+        return tts.list_providers()
+
+    @server.tool(annotations=read)
+    async def list_voices(provider: str) -> dict[str, Any]:
+        """List the administrator-configured voice allowlist for a provider."""
+        require_scope(READ)
+        return tts.list_voices(provider)
+
+    @server.tool(annotations=read)
+    async def estimate_tts_cost(items: list[dict[str, str]]) -> dict[str, Any]:
+        """Estimate incremental cost in integer micro-USD for 1–10 provider/voice/text requests; check cache and daily budget."""
+        require_scope(READ)
+        return await tts.estimate(items)
+
+    paid = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+
+    @server.tool(annotations=paid)
+    async def generate_audio(provider: str, voice: str, text: str, max_cost_microusd: int, confirm: bool) -> dict[str, Any]:
+        """Generate or reuse one immutable MP3. Requires user approval and maximum approved cost in micro-USD. Failed/pending requests are not retried."""
+        require_scope(EDIT)
+        if not confirm:
+            raise ValueError("Audio generation requires explicit confirmation")
+        return await tts.generate_batch([{"provider": provider, "voice": voice, "text": text}], max_cost_microusd)
+
+    @server.tool(annotations=paid)
+    async def batch_generate_audio(items: list[dict[str, str]], max_cost_microusd: int, confirm: bool) -> dict[str, Any]:
+        """Generate 1–10 MP3 assets. Reserve the entire batch budget atomically before contacting providers. Explicit approval required."""
+        require_scope(EDIT)
+        if not confirm:
+            raise ValueError("Audio generation requires explicit confirmation")
+        return await tts.generate_batch(items, max_cost_microusd)
+
+    @server.tool(annotations=write)
+    async def attach_audio(draft_kind: Literal["new", "edit"], draft_id: str, expected_revision: int, task_index: int, asset_id: str, expected_task_id: int | None = None) -> dict[str, Any]:
+        """Attach an existing immutable audio asset to a Stage 7 draft task. Existing tasks require their permanent ID; new tasks use null. Publish separately."""
+        require_scope(EDIT)
+        return await tts.attach_audio(draft_kind, draft_id, expected_revision, task_index, asset_id, expected_task_id)
 
     return server
 
