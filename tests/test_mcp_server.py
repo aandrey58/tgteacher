@@ -68,6 +68,9 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(len(names), 10)
         self.assertIn("publish_draft", names)
         self.assertIn("search_words", names)
+        template = self.call("get_content_format", {}, READER)
+        self.assertFalse(template.get("isError", False), template)
+        self.assertIn("#FAMILY", str(template))
 
     def test_permissions_and_confirmation(self):
         args = {"draft_id": str(uuid.uuid4()), "expected_revision": 1, "confirm": True}
