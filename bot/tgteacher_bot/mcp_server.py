@@ -1,7 +1,7 @@
 """TGTeacher content MCP — Streamable HTTP, no Telegram or provider keys needed."""
 import os
 from urllib.parse import urlsplit
-from typing import Any
+from typing import Any, Literal
 
 import uvicorn
 from dotenv import load_dotenv
@@ -10,7 +10,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
-from tgteacher_bot.db import drafts_repo as drafts, families_repo as families, content_versions as versions
+from tgteacher_bot.db import drafts_repo as drafts, families_repo as families, content_versions as versions, content_operations as operations
 from tgteacher_bot.db.pool import get_pool
 from tgteacher_bot.db.user_repo import init_db_pg
 from tgteacher_bot.mcp_auth import READ, EDIT, PUBLISH, require_scope, verifier_from_env
@@ -203,6 +203,50 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         if not confirm:
             raise ValueError("Rollback requires explicit confirmation")
         return await versions.rollback_family(family_id, version, expected_version)
+
+    destructive_draft = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
+
+    @server.tool(annotations=destructive_draft)
+    async def delete_draft(draft_id: str, expected_revision: int, confirm: bool) -> dict[str, Any]:
+        """Discard an unpublished new-group draft. Published lessons and learner progress are untouched."""
+        require_scope(EDIT)
+        if not confirm:
+            raise ValueError("Draft deletion requires explicit confirmation")
+        return await drafts.delete_draft(draft_id, expected_revision)
+
+    @server.tool(annotations=destructive_draft)
+    async def delete_edit_draft(draft_id: str, expected_revision: int, confirm: bool) -> dict[str, Any]:
+        """Discard an unpublished edit draft. The original published group and its versions remain unchanged."""
+        require_scope(EDIT)
+        if not confirm:
+            raise ValueError("Draft deletion requires explicit confirmation")
+        return await versions.delete_edit_draft(draft_id, expected_revision)
+
+    @server.tool(annotations=write)
+    async def add_tasks(draft_kind: Literal["new", "edit"], draft_id: str, expected_revision: int, stage: int, tasks: list[dict[str, Any]], insert_at: int | None = None) -> dict[str, Any]:
+        """Append or insert 1–100 tasks in a draft stage. Stage 1 is words. Zero-based insert_at; omit task_id. Use the returned revision for the next operation."""
+        require_scope(EDIT)
+        return await operations.add_tasks(draft_kind, draft_id, expected_revision, stage, tasks, insert_at)
+
+    @server.tool(annotations=write)
+    async def update_task(draft_kind: Literal["new", "edit"], draft_id: str, expected_revision: int, stage: int, task_index: int, patch: dict[str, Any]) -> dict[str, Any]:
+        """Patch fields of one draft task at a zero-based position in the expected revision. The task's permanent ID cannot be changed."""
+        require_scope(EDIT)
+        return await operations.update_task(draft_kind, draft_id, expected_revision, stage, task_index, patch)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False))
+    async def archive_task(draft_kind: Literal["new", "edit"], draft_id: str, expected_revision: int, stage: int, task_index: int, confirm: bool) -> dict[str, Any]:
+        """Remove a task from the draft only. On later edit publication, old task IDs and learner answers are archived, never erased."""
+        require_scope(EDIT)
+        if not confirm:
+            raise ValueError("Task removal requires explicit confirmation")
+        return await operations.archive_task(draft_kind, draft_id, expected_revision, stage, task_index)
+
+    @server.tool(annotations=write)
+    async def reorder_tasks(draft_kind: Literal["new", "edit"], draft_id: str, expected_revision: int, stage: int, order: list[int]) -> dict[str, Any]:
+        """Reorder one draft stage using a complete permutation of zero-based positions in the expected revision. Existing IDs are preserved."""
+        require_scope(EDIT)
+        return await operations.reorder_tasks(draft_kind, draft_id, expected_revision, stage, order)
 
     return server
 
