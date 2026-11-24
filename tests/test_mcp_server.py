@@ -88,7 +88,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         result = self.rpc("tools/list").json()["result"]
         names = {tool["name"] for tool in result["tools"]}
-        self.assertEqual(len(names), 43)
+        self.assertEqual(len(names), 45)
         roadmap = (ROOT / "docs" / "MCP_V1_ROADMAP.md").read_text(encoding="utf-8")
         rows = re.findall(r"^\| \d+ \| `(\w+)` \| .*? \| (implemented|planned) \|", roadmap, re.M)
         self.assertEqual(len(rows), 45)
@@ -125,7 +125,7 @@ class HTTPTests(unittest.TestCase):
     @unittest.skipUnless(os.getenv("TGTEACHER_TEST_DSN"), "requires isolated PostgreSQL")
     def test_http_publish_and_search_real_database(self):
         import asyncpg
-        from tgteacher_bot.db import user_repo, families_repo, content_versions, srs_repo
+        from tgteacher_bot.db import user_repo, families_repo, content_versions, srs_repo, learner_preferences
         from tgteacher_bot import mcp_server
         dsn = os.environ["TGTEACHER_TEST_DSN"]
         schema = "test_" + uuid.uuid4().hex
@@ -151,7 +151,7 @@ class HTTPTests(unittest.TestCase):
                 await admin.close()
 
         self.addCleanup(self.client.portal.call, cleanup)
-        for module in (user_repo, families_repo, drafts, mcp_server, content_versions, srs_repo):
+        for module in (user_repo, families_repo, drafts, mcp_server, content_versions, srs_repo, learner_preferences):
             p = patch.object(module, "get_pool", new=AsyncMock(return_value=pool))
             p.start()
             self.addCleanup(p.stop)
@@ -189,6 +189,18 @@ class HTTPTests(unittest.TestCase):
         self.assertTrue(self.call("get_family",{"family_id":published["family_id"]},first)["isError"])
         self.assertTrue(self.call("list_media",{},first)["isError"])
         self.assertTrue(self.call("create_draft",{"draft_id":str(uuid.uuid4()),"family_txt":SOURCE},first)["isError"])
+        own = invoke("get_learner_profile",{},first)
+        self.assertEqual(own["preferences"]["revision"],0)
+        args = {"expected_revision":0,"patch":{"daily_review_goal":30,"review_order":"weak_first"},"confirm":True}
+        for token in (READER,EDITOR,PUBLISHER):
+            self.assertTrue(self.call("get_learner_profile",{},token)["isError"])
+            self.assertTrue(self.call("update_learning_preferences",args,token)["isError"])
+        self.assertTrue(self.call("update_learning_preferences",{**args,"confirm":False},first)["isError"])
+        self.assertEqual(invoke("update_learning_preferences",args,first)["revision"],1)
+        self.assertEqual(invoke("get_learner_profile",{},first)["preferences"]["daily_review_goal"],30)
+        self.assertEqual(invoke("get_learner_profile",{},second)["preferences"]["daily_review_goal"],20)
+        self.assertTrue(self.call("update_learning_preferences",args,first)["isError"])
+        self.assertTrue(self.call("update_learning_preferences",{"expected_revision":1,"patch":{"user_id":222},"confirm":True},first)["isError"])
         self.client.portal.call(srs_repo.revoke_token,111)
         self.assertEqual(self.rpc("tools/list",token=first).status_code,401)
 
