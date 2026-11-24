@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bot"))
 from fsrs import Card, Rating
 from tgteacher_bot.db import srs_repo as srs, srs_schema, content_versions as versions, families_repo as families, user_repo as users
-from tgteacher_bot.mcp_auth import StaticTokenVerifier, LearnerTokenVerifier, LEARNER_READ
+from tgteacher_bot.mcp_auth import StaticTokenVerifier, LearnerTokenVerifier, LEARNER_READ, LEARNER_EDIT
 from tgteacher_bot.handlers.user import reviews
 from types import SimpleNamespace
 
@@ -168,7 +168,7 @@ class SRSDatabaseTests(unittest.IsolatedAsyncioTestCase):
         verifier = LearnerTokenVerifier(StaticTokenVerifier("r"*32,"e"*32,"p"*32),"https://teacher.example/mcp")
         raw = await srs.issue_token(11)
         token = await verifier.verify_token(raw)
-        self.assertEqual(token.scopes,[LEARNER_READ])
+        self.assertEqual(token.scopes,[LEARNER_READ, LEARNER_EDIT])
         self.assertEqual(token.client_id,"learner:11")
         newer = await srs.issue_token(11)
         self.assertIsNone(await verifier.verify_token(raw))
