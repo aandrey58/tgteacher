@@ -5,6 +5,7 @@ from pathlib import Path
 
 from tgteacher_bot.db.content_schema import STAGES, JSON_FIELDS, stage_key
 from tgteacher_bot.db.pool import get_pool
+from tgteacher_bot.db.tts_repo import validate_audio_files, record_audio_links
 from tgteacher_bot.utils.content_validation import validate_family, family_identity, DuplicateFamilyError
 from tgteacher_bot.core.paths import families_dir
 
@@ -38,6 +39,7 @@ async def record_initial_version(conn, family_id):
         INSERT INTO family_versions(family_id, version, content) VALUES($1,$2,$3::jsonb)
         ON CONFLICT(family_id,version) DO NOTHING
     """, family_id, meta["content_version"], json.dumps(content, ensure_ascii=False))
+    await record_audio_links(conn, family_id, meta["content_version"], content)
 
 
 async def get_current_content(family_id):
@@ -157,16 +159,23 @@ async def _validate_candidate(conn, meta, old, content):
     rows = await conn.fetch("SELECT name,target FROM families WHERE id<>$1", meta["id"])
     if any(family_identity(r["name"], r["target"]) == identity for r in rows):
         raise DuplicateFamilyError("Group name and access tier already reserved")
-    if content["stage5_tasks"] or content["stage7_tasks"]:
-        folder = meta["folder_name"]
-        if not folder or Path(folder).name != folder or folder in (".", ".."):
-            raise ValueError("No media directory for this group")
+    await _validate_version_media(conn, meta, content)
+    return plan
+
+
+async def _validate_version_media(conn, meta, content):
+    if not (content["stage5_tasks"] or content["stage7_tasks"]):
+        return
+    folder = meta["folder_name"]
+    path = None
+    if folder:
+        if Path(folder).name != folder or folder in (".", ".."):
+            raise ValueError("Invalid media directory")
         root = families_dir().resolve()
         path = (root / folder).resolve()
         if path.parent != root:
             raise ValueError("Invalid media directory")
-        validate_family(content, media_dir=path)
-    return plan
+    await validate_audio_files(conn, content, path)
 
 
 def _draft(row):
@@ -350,6 +359,7 @@ async def _apply(conn, meta, old, content, plan=None, restored_from=None):
     await conn.execute("""
         INSERT INTO family_versions(family_id,version,content,restored_from) VALUES($1,$2,$3::jsonb,$4)
     """, fid, version+1, json.dumps(snapshot, ensure_ascii=False), restored_from)
+    await record_audio_links(conn, fid, version+1, snapshot)
     return {"family_id": fid, "content_version": version+1, "restored_from": restored_from}
 
 
@@ -405,6 +415,7 @@ async def rollback_family(family_id, version, expected_version):
             rows = await conn.fetch("SELECT name,target FROM families WHERE id<>$1", family_id)
             if any(family_identity(r["name"],r["target"]) == identity for r in rows):
                 raise DuplicateFamilyError("Historical name and access tier are already reserved")
+            await _validate_version_media(conn, meta, content)
             return await _apply(conn, meta, old, content, restored_from=version)
 
 
