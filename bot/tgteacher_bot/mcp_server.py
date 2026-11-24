@@ -366,6 +366,21 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         from tgteacher_bot.db.srs_repo import due_reviews
         return await due_reviews(require_learner(),limit,offset)
 
+    @server.tool(annotations=read)
+    async def get_learner_profile() -> dict[str, Any]:
+        """Read own preferences, review goal, due workload and evidence-based study recommendations. CEFR is self-assessed."""
+        from tgteacher_bot.db.learner_preferences import profile
+        return await profile(require_learner())
+
+    @server.tool(annotations=write)
+    async def update_learning_preferences(expected_revision: int, patch: dict[str, Any], confirm: bool) -> dict[str, Any]:
+        """Update only own preferences with explicit consent and revision check. Fields: daily_review_goal (5–200), desired_retention (0.80–0.97), review_order (due/weak_first), self_assessed_level (A1–C2/unspecified). New retention applies at subsequent reviews."""
+        from tgteacher_bot.db.learner_preferences import update_preferences
+        uid = require_learner(write=True)
+        if not confirm:
+            raise ValueError("Preference changes require confirmation")
+        return await update_preferences(uid,expected_revision,patch)
+
     return server
 
 
