@@ -109,7 +109,8 @@ def _strings(obj):
 # Only non-assessment fields may change in place. Everything else gets a
 # fresh exercise row ID, so a changed answer can never inherit a correct result.
 COSMETIC = {1: {"translation", "example", "example_translation", "hint"},
-            **{n: {"explanation"} for n in range(2, 8)}, 8: {"explanations"}}
+            **{n: {"explanation"} for n in range(2, 8)}, 5: {"explanation", "image"},
+            7: {"explanation", "audio"}, 8: {"explanations"}}
 
 
 def plan_edit(old, new):
@@ -215,6 +216,12 @@ async def preview_edit(draft_id):
                 raise VersionConflict("Draft published or based on stale version")
             candidate = clean_content(draft["content"])
             plan = await _validate_candidate(conn, meta, old, candidate)
+            for stage in STAGES:
+                change = plan[stage_key(stage)]
+                affected = await conn.fetchrow("""SELECT count(*) AS answers, count(DISTINCT user_id) AS learners
+                    FROM user_task_progress WHERE family_idx=$1 AND stage_num=$2 AND task_id=ANY($3::int[])""", meta["id"], stage, change["archived_ids"])
+                change["historical_answers"] = affected["answers"]
+                change["affected_learners"] = affected["learners"]
     return {"draft_id": draft_id, "revision": draft["revision"], "base_version": draft["base_version"],
             "valid": True, "changes": plan, "metadata_changed": any(old[k] != candidate[k] for k in ("name","description","target"))}
 
