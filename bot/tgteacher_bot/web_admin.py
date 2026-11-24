@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from starlette.applications import Starlette
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, FileResponse, Response
 from starlette.routing import Route, Mount
@@ -271,13 +272,13 @@ def build_app(secret, origin, static_dir=None, initialize=True):
     if static_dir:
         routes.append(Mount("/",app=StaticFiles(directory=static_dir,html=True)))
     app=Starlette(routes=routes,lifespan=lifespan)
-    @app.middleware("http")
     async def security_headers(request,call_next):
         response=await call_next(request)
         response.headers["X-Frame-Options"]="DENY"
         response.headers["Referrer-Policy"]="no-referrer"
         response.headers["Content-Security-Policy"]="default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         return response
+    app.add_middleware(BaseHTTPMiddleware, dispatch=security_headers)
     return app
 
 
