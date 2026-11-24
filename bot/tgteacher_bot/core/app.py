@@ -18,6 +18,7 @@ from dotenv import find_dotenv, load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
@@ -218,7 +219,16 @@ async def _refresh_catalog_callback(update, context):
     await refresh_families_meta()
 
 
+async def _guard_archived_stage_callback(update, context):
+    from tgteacher_bot.db.families_repo import get_family_data_pg
+    family_id = context.user_data.get('current_family_idx') or await get_current_family_idx_pg(update.effective_user.id)
+    if family_id and not await get_family_data_pg(family_id):
+        await update.callback_query.answer('Группа в архиве или недоступна. Прогресс сохранён.', show_alert=True)
+        raise ApplicationHandlerStop
+
+
 def _register_handlers(application: Application):
+    application.add_handler(CallbackQueryHandler(_guard_archived_stage_callback, pattern=r'^stage[1-8]_'), group=-3)
     application.add_handler(CallbackQueryHandler(_refresh_catalog_callback), group=-2)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
