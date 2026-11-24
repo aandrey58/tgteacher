@@ -4,6 +4,8 @@ import os
 import io
 import shutil
 import tempfile
+import zipfile
+from tgteacher_bot.db.drafts_repo import get_published_source
 import tgteacher_bot.utils.families_data as families_data
 from tgteacher_bot.handlers.admin.admin_status import track_metrics
 
@@ -24,15 +26,20 @@ async def admin_family_export_callback(update: Update, context: ContextTypes.DEF
 
     folder_name = fam.get('folder_name') or ''
     family_folder = os.path.join(families_data.families_dir, folder_name)
-    if not folder_name or not os.path.isdir(family_folder):
-        await query.edit_message_text('❌ Папка группы слов не найдена на сервере.')
-        return
-
-    # Готовим zip в память (tempfile -> BytesIO)
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            zip_path = os.path.join(tmpdir, f'{folder_name}.zip')
-            shutil.make_archive(base_name=zip_path[:-4], format='zip', root_dir=family_folder)
+            zip_path = os.path.join(tmpdir, 'family.zip')
+            if folder_name and os.path.isdir(family_folder):
+                shutil.make_archive(base_name=zip_path[:-4], format='zip', root_dir=family_folder,
+                                    base_dir='.')
+            else:
+                source = await get_published_source(family_id)
+                if source is None:
+                    await query.edit_message_text('❌ Папка группы слов не найдена на сервере.')
+                    return
+                folder_name = f'family-{family_id}'
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as archive:
+                    archive.writestr(f'{folder_name}/lesson.txt', source)
             with open(zip_path, 'rb') as f:
                 data = f.read()
         bio = io.BytesIO(data)
