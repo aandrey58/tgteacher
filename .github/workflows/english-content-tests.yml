@@ -35,7 +35,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install test dependencies
-        run: python -m pip install asyncpg python-telegram-bot pyzipper 'mcp>=1.26,<2' uvicorn python-dotenv 'mutagen>=1.47,<2' 'Pillow>=11.3,<13' 'fsrs==6.3.1'
+        run: python -m pip install -r requirements.txt
       - name: Verify FFmpeg
         run: |
           sudo apt-get update
@@ -45,3 +45,33 @@ jobs:
         run: python -m compileall -q bot tests
       - name: Run regression and PostgreSQL integration tests
         run: python -m unittest discover -s tests -v
+
+  release-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare isolated smoke credentials
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=ci-only-password/' .env
+          cp bot.env.example bot.env
+          echo 'BOT_TOKEN=123456:ci-only-test-token' >> bot.env
+          cp mcp.env.example mcp.env
+          echo 'TGTEACHER_MCP_READ_TOKEN=rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr' >> mcp.env
+          echo 'TGTEACHER_MCP_EDIT_TOKEN=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' >> mcp.env
+          echo 'TGTEACHER_MCP_PUBLISH_TOKEN=pppppppppppppppppppppppppppppppp' >> mcp.env
+          mkdir -p runtime_cache bot/exports
+          docker compose config --quiet
+      - name: Build release containers
+        run: docker compose build bot mcp
+      - name: Start isolated DB and MCP
+        run: docker compose up -d --wait --wait-timeout 120 db mcp
+      - name: Verify readiness, protected discovery and runtime bot registration
+        run: |
+          curl --fail --silent http://127.0.0.1:8000/healthz
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' http://127.0.0.1:8000/mcp)" = 401
+          curl --fail --silent -H 'Authorization: Bearer rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' http://127.0.0.1:8000/mcp | python -c 'import sys,json; assert len(json.load(sys.stdin)["result"]["tools"])==45'
+          docker compose run --rm --no-deps bot python -c 'from tgteacher_bot.core.app import build_application; a=build_application(); assert a.job_queue is not None; assert a.handlers'
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
