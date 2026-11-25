@@ -20,6 +20,11 @@ async def init_orders(c):
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), processed_at TIMESTAMPTZ,
             result_subscription_until TIMESTAMPTZ
         );
+        ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS refunded_amount INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE IF NOT EXISTS payment_refund_observations (
+            order_id UUID NOT NULL REFERENCES payment_orders(id), amount INTEGER NOT NULL CHECK(amount>0),
+            observed_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(order_id,amount)
+        );
         CREATE INDEX IF NOT EXISTS payment_orders_user_idx ON payment_orders(user_id,created_at DESC);
     """)
 
@@ -118,7 +123,12 @@ async def bind_created(uid,order_id,payment):
     async with pool.acquire() as c:
         async with c.transaction():
             row=await c.fetchrow("SELECT * FROM payment_orders WHERE id=$1 AND user_id=$2 FOR UPDATE",ident(order_id),uid)
-            if not row or row["state"] not in ("creating","uncertain"):
+            if not row:
+                raise PaymentConflict("Unknown order")
+            if row["provider_id"]:
+                verified_remote(row,payment)
+                return dict(row)
+            if row["state"] not in ("creating","uncertain"):
                 raise PaymentConflict("Order not awaiting provider binding")
             pid,state,url=verified_remote(row,payment)
             if await c.fetchval("SELECT 1 FROM payments WHERE payment_id=$1",pid):
@@ -137,7 +147,13 @@ async def settle(uid,order_id,payment):
             if not row or not row["provider_id"]:
                 raise PaymentConflict("Order not bound")
             pid,state,url=verified_remote(row,payment)
-            if row["state"] in ("succeeded","canceled"):
+            refunded=verified_refund_total(row,payment)
+            if refunded>row["refunded_amount"]:
+                await c.execute("INSERT INTO payment_refund_observations(order_id,amount) VALUES($1,$2) ON CONFLICT DO NOTHING",row["id"],refunded)
+                row=await c.fetchrow("UPDATE payment_orders SET refunded_amount=$2,updated_at=now() WHERE id=$1 RETURNING *",row["id"],refunded)
+            # Never grant a previously uncredited, already refunded payment. A later
+            # lower/absent provider total cannot erase previously verified evidence.
+            if row["state"] in ("succeeded","canceled") or row["refunded_amount"]>0:
                 return dict(row)
             if row["state"]=="waiting_for_capture" and state=="pending":
                 return dict(row)
@@ -159,3 +175,34 @@ async def settle(uid,order_id,payment):
             row=await c.fetchrow("""UPDATE payment_orders SET state='succeeded',processed_at=now(),updated_at=now(),result_subscription_until=$2
                 WHERE id=$1 RETURNING *""",row["id"],until)
             return dict(row)
+
+
+def verified_refund_total(order,payment):
+    """The authenticated provider Payment.refunded_amount is cumulative RUB."""
+    value=getattr(payment,"refunded_amount",None)
+    if value is None:
+        return 0
+    try:
+        total=Decimal(str(value.value))*100
+        if value.currency!="RUB" or not total.is_finite() or total!=total.to_integral_value() or not 0<=total<=order["amount"]:
+            raise PaymentConflict("Invalid refund total")
+        if total and payment.status!="succeeded":
+            raise PaymentConflict("Refund on non-succeeded payment")
+        return int(total)
+    except (AttributeError,TypeError,InvalidOperation,ValueError) as exc:
+        raise PaymentConflict("Invalid refund total") from exc
+
+async def operator_orders():
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        rows=await c.fetch("""SELECT id,user_id,months,amount,state,provider_id,refunded_amount,updated_at
+            FROM payment_orders WHERE state=ANY($1::text[]) OR refunded_amount>0
+            ORDER BY updated_at DESC,id LIMIT 100""",list(ACTIVE))
+    return [dict(r) for r in rows]
+
+async def legacy_record(provider_id):
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        row=await c.fetchrow("""SELECT payment_id,user_id,months,amount,status,processed,result_subscription_until
+            FROM payments WHERE payment_id=$1""",str(ident(provider_id)))
+    return dict(row) if row else None

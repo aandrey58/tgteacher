@@ -66,7 +66,7 @@ async def subscription_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def buy_subscription_placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    from tgteacher_bot.services.payments.yookassa_payment import creation_enabled,private_owner
+    from tgteacher_bot.services.payments.yookassa_payment import private_owner
     from tgteacher_bot.db.payment_orders import open_orders
     if not private_owner(update):
         return
@@ -76,55 +76,7 @@ async def buy_subscription_placeholder(update: Update, context: ContextTypes.DEF
         buttons.append([InlineKeyboardButton("Назад",callback_data="subscription")])
         await query.edit_message_text("Сначала проверьте существующий заказ. При неопределённом результате обратитесь в поддержку.",reply_markup=InlineKeyboardMarkup(buttons))
         return
-    if not creation_enabled():
-        await query.edit_message_text("Новые покупки временно недоступны.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад",callback_data="subscription")]]))
-        return
-    try:
-        from tgteacher_bot.db.pool import get_pool
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch('SELECT months, amount FROM payment_options WHERE months BETWEEN 1 AND 60 AND amount BETWEEN 1 AND 100000 ORDER BY months')
-            
-        if not rows:
-            text = '❌ <b>Варианты оплаты недоступны</b>\n\nК сожалению, варианты оплаты временно недоступны.\nПопробуйте позже.'
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton('⬅️ Назад', callback_data='subscription')]
-            ])
-        else:
-            text = '💳 <b>Выберите срок и сумму подписки</b>\n\nВыберите подходящий для Вас вариант:'
-            buttons = []
-            
-            # Создаем кнопки подписки в 2 столбика
-            for i in range(0, len(rows), 2):
-                row_buttons = []
-                months = rows[i]['months']
-                amount = rows[i]['amount']
-                button_text = f'💎 {months} мес. - {amount}₽'
-                callback_data = f'buy_option_{months}_{amount}'
-                row_buttons.append(InlineKeyboardButton(button_text, callback_data=callback_data))
-                
-                # Добавляем вторую кнопку в строку, если есть
-                if i + 1 < len(rows):
-                    months2 = rows[i + 1]['months']
-                    amount2 = rows[i + 1]['amount']
-                    button_text2 = f'💎 {months2} мес. - {amount2}₽'
-                    callback_data2 = f'buy_option_{months2}_{amount2}'
-                    row_buttons.append(InlineKeyboardButton(button_text2, callback_data=callback_data2))
-                
-                buttons.append(row_buttons)
-            
-            # Добавляем кнопку "Назад" внизу
-            buttons.append([InlineKeyboardButton('⬅️ Назад', callback_data='subscription')])
-            keyboard = InlineKeyboardMarkup(buttons)
-            
-    except Exception as e:
-        text = '❌ <b>Ошибка загрузки</b>\n\nНе удалось загрузить варианты оплаты.\nПопробуйте позже.'
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton('⬅️ Назад', callback_data='subscription')]
-        ])
-    
-    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
-
+    await query.edit_message_text("Новые покупки временно недоступны. Ранее оплаченные заказы можно проверить.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад",callback_data="subscription")]]))
 
 @track_metrics
 async def buy_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -132,43 +84,7 @@ async def buy_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     
-    # Парсим callback_data: buy_option_{months}_{amount}
-    callback_data = query.data
-    parts = callback_data.split('_')
-    
-    if len(parts) != 4:
-        await query.edit_message_text('❌ Ошибка: неверный формат данных')
-        return
-    
-    try:
-        months = int(parts[2])
-        amount = int(parts[3])
-    except ValueError:
-        await query.edit_message_text('❌ Ошибка: неверные данные')
-        return
-    
-    from tgteacher_bot.services.payments.yookassa_payment import creation_enabled,private_owner
-    from tgteacher_bot.db.payment_orders import prepare
-    try:
-        if not private_owner(update) or not creation_enabled():
-            raise ValueError("Purchases unavailable")
-        order_id=await prepare(query.from_user.id,months,amount*100)
-    except Exception:
-        await query.edit_message_text("Тариф изменился или недоступен. Выберите актуальный вариант.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("К тарифам",callback_data="buy_subscription")]]))
-        return
-    # Показываем информацию о выбранном варианте
-    text = f'💳 <b>Подтверждение покупки</b>\n\n'
-    text += f'Вы выбрали подписку:\n'
-    text += f'<b>Срок:</b> {months} мес.\n'
-    text += f'<b>Стоимость:</b> {amount}₽\n\n'
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton('✅ Подтвердить', callback_data='confirm_payment_'+str(order_id))],
-        [InlineKeyboardButton('⬅️ Назад', callback_data='buy_subscription')]
-    ])
-    
-    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
-
+    await query.edit_message_text("Новые покупки временно недоступны.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("К подписке",callback_data="subscription")]]))
 
 @track_metrics
 async def confirm_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

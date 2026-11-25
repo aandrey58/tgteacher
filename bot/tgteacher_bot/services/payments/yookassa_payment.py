@@ -50,6 +50,38 @@ class YooKassaPayment:
             return await orders.settle(user_id,order_id,payment)
         return row
 
+    async def reconcile(self,user_id,order_id,provider_id,*,apply=False):
+        """Operator-only command; never create a charge or trust supplied metadata."""
+        row=await orders.get_order(user_id,order_id)
+        pid=str(orders.ident(provider_id))
+        if row["state"]=="prepared" or (row["provider_id"] and row["provider_id"]!=pid):
+            raise orders.PaymentConflict("Order is not eligible for reconciliation")
+        payment=await asyncio.wait_for(asyncio.to_thread(Payment.find_one,pid),25)
+        verified_id,state,_=orders.verified_remote(row,payment)
+        if verified_id!=pid:
+            raise orders.PaymentConflict("Provider lookup ID mismatch")
+        refunded=orders.verified_refund_total(row,payment)
+        if not apply:
+            return {"id":str(row["id"]),"state":row["state"],"provider_state":state,
+                    "provider_id":pid,"amount":row["amount"],"refunded_amount":refunded,"apply":False}
+        if not row["provider_id"]:
+            row=await orders.bind_created(user_id,order_id,payment)
+        return await orders.settle(user_id,order_id,payment)
+
+    async def inspect_legacy(self,provider_id):
+        pid=str(orders.ident(provider_id))
+        payment=await asyncio.wait_for(asyncio.to_thread(Payment.find_one,pid),25)
+        if str(orders.ident(payment.id))!=pid:
+            raise orders.PaymentConflict("Provider lookup ID mismatch")
+        # Read only. Historical paid rows may have been written before access was granted.
+        return {"local_ledger":await orders.legacy_record(pid),"provider_id":pid,
+                "provider_state":payment.status,"provider_paid":payment.paid,
+                "provider_amount":payment.amount.value,"provider_currency":payment.amount.currency,
+                "metadata_user_id":payment.metadata.get("user_id"),
+                "metadata_months":payment.metadata.get("months"),
+                "metadata_type":payment.metadata.get("payment_type"),
+                "refunded_amount":getattr(getattr(payment,"refunded_amount",None),"value",None)}
+
     async def check_payment_status(self,user_id,order_id):
         row=await orders.get_order(user_id,order_id)
         if row["state"] in ("succeeded","canceled") or not row["provider_id"]:
@@ -73,7 +105,10 @@ def private_owner(update):
 async def show_order(query,row):
     oid=str(row["id"])
     state=row["state"]
-    if state=="succeeded":
+    if row.get("refunded_amount",0)>0:
+        text=f"Заказ {oid}: зарегистрирован возврат. Для уточнения доступа обратитесь в поддержку."
+        buttons=[[InlineKeyboardButton("Поддержка",callback_data="help")]]
+    elif state=="succeeded":
         text="✅ Оплата подтверждена, подписка была начислена."
         buttons=[[InlineKeyboardButton("Моя подписка",callback_data="subscription")]]
     elif state=="canceled":
@@ -82,8 +117,8 @@ async def show_order(query,row):
     elif state in ("pending","waiting_for_capture"):
         text=f"Заказ: {oid}\nСрок: {row['months']} мес.\nСумма: {row['amount']/100:.2f} ₽\nПлатёж ожидает подтверждения."
         buttons=[]
-        if row["payment_url"] and state=="pending":
-            buttons.append([InlineKeyboardButton("Оплатить",url=row["payment_url"])])
+        # Do not advertise external checkout for Telegram digital content.
+        # Existing paid orders can still be checked/reconciled.
         buttons.append([InlineKeyboardButton("Проверить оплату",callback_data="check_payment_"+oid)])
     elif state in ("creating","uncertain"):
         text=f"Заказ {oid}: результат создания не подтверждён. Не оплачивайте повторно. Обратитесь в поддержку с номером заказа."
@@ -111,7 +146,12 @@ async def create_payment_callback(update,context):
     oid=None
     try:
         oid=orders.ident(query.data.removeprefix("confirm_payment_"))
-        row=await get_yookassa_payment().create_payment(query.from_user.id,oid)
+        # Telegram digital subscriptions require Stars. Keep external payment
+        # service available only for a separately approved independent checkout.
+        row=await orders.get_order(query.from_user.id,oid)
+        if row["state"]=="prepared":
+            await query.edit_message_text("Новые покупки временно недоступны.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("К подписке",callback_data="subscription")]]))
+            return
         await show_order(query,row)
     except Exception:
         await show_error(query,oid)

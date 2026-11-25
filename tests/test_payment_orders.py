@@ -209,3 +209,70 @@ class PaymentDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 await self.service.check_payment_status(11,old)
             sdk.assert_not_called()
         self.assertEqual(await self.snapshot(),before)
+
+    async def test_operator_reconciliation_and_refund_monotonicity(self):
+        oid=await orders.prepare(11,3,30000)
+        row=await orders.get_order(11,oid)
+        with patch.object(yoo.Payment,"create",side_effect=TimeoutError("synthetic unknown")):
+            with self.assertRaises(TimeoutError):
+                await self.service.create_payment(11,oid)
+        pid=str(uuid.uuid4())
+        paid=remote(row,"succeeded",pid)
+        with patch.object(yoo.Payment,"find_one",return_value=paid),patch.object(yoo.Payment,"create") as create:
+            preview=await self.service.reconcile(11,oid,pid)
+            self.assertFalse(preview["apply"])
+            self.assertEqual((await orders.get_order(11,oid))["state"],"uncertain")
+            with self.assertRaises(orders.PaymentConflict):
+                await self.service.reconcile(22,oid,pid,apply=True)
+            with self.assertRaises(orders.PaymentConflict):
+                await self.service.reconcile(11,oid,str(uuid.uuid4()),apply=True)
+            self.assertEqual((await self.service.reconcile(11,oid,pid,apply=True))["state"],"succeeded")
+            create.assert_not_called()
+        credited=await self.snapshot()
+        for amount,expected in [("100.00",10000),("100.00",10000),("300.00",30000),("0.00",30000)]:
+            returned=remote(row,"succeeded",pid,refunded_amount=SimpleNamespace(value=amount,currency="RUB"))
+            with patch.object(yoo.Payment,"find_one",return_value=returned):
+                result=await self.service.reconcile(11,oid,pid,apply=True)
+                self.assertEqual(result["refunded_amount"],expected)
+            self.assertEqual(await self.snapshot(),credited)
+        async with self.pool.acquire() as c:
+            self.assertEqual(await c.fetchval("SELECT count(*) FROM payment_refund_observations WHERE order_id=$1",oid),2)
+
+    async def test_refunded_before_credit_and_wrong_refund_currency(self):
+        oid,row=await self.make_pending()
+        before=await self.snapshot()
+        pid=row["provider_id"]
+        with patch.object(yoo.Payment,"find_one",return_value=remote(row,"succeeded",pid,refunded_amount=SimpleNamespace(value="100.00",currency="USD"))):
+            with self.assertRaises(orders.PaymentConflict):
+                await self.service.check_payment_status(11,oid)
+        with patch.object(yoo.Payment,"find_one",return_value=remote(row,"succeeded",pid,refunded_amount=SimpleNamespace(value="100.00",currency="RUB"))):
+            observed=await self.service.check_payment_status(11,oid)
+            self.assertEqual(observed["refunded_amount"],10000)
+            self.assertNotEqual(observed["state"],"succeeded")
+        with patch.object(yoo.Payment,"find_one",return_value=remote(row,"succeeded",pid)):
+            self.assertNotEqual((await self.service.check_payment_status(11,oid))["state"],"succeeded")
+        self.assertEqual(await self.snapshot(),before)
+
+    async def test_bot_cannot_initiate_rub_payment_even_when_adapter_enabled(self):
+        oid=await orders.prepare(11,3,30000)
+        user=SimpleNamespace(id=11)
+        query=SimpleNamespace(from_user=user,answer=AsyncMock(),edit_message_text=AsyncMock(),data="confirm_payment_"+str(oid))
+        update=SimpleNamespace(callback_query=query,effective_user=user,effective_chat=SimpleNamespace(id=11,type="private"))
+        with patch.object(yoo.Payment,"create") as sdk:
+            await yoo.create_payment_callback(update,None)
+            sdk.assert_not_called()
+        self.assertEqual((await orders.get_order(11,oid))["state"],"prepared")
+
+    async def test_legacy_gift_confirmation_uses_shared_transaction(self):
+        from tgteacher_bot.services.payments import sub_gift
+        op=uuid.uuid4().hex
+        query=SimpleNamespace(data="admin_gift_subscription_confirm_"+op,answer=AsyncMock(),edit_message_text=AsyncMock())
+        context=SimpleNamespace(user_data={"gift_subscription_operation":op,"gift_subscription_user_id":11,"gift_subscription_days":30})
+        update=SimpleNamespace(callback_query=query)
+        await sub_gift.gift_subscription_confirm_callback(update,context)
+        first=await self.snapshot()
+        self.assertTrue(first["is_subscribed"])
+        await sub_gift.gift_subscription_confirm_callback(update,context)
+        self.assertEqual(await self.snapshot(),first)
+        async with self.pool.acquire() as c:
+            self.assertEqual(await c.fetchval("SELECT count(*) FROM payments WHERE status='gift'"),1)
