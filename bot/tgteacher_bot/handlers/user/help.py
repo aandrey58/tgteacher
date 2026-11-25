@@ -226,7 +226,7 @@ async def help_user_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     # Получаем текст
     text = (update.message.text or '').strip()
     # In web support mode persist the question before acknowledging it.
-    web_support = os.getenv("TGTEACHER_WEB_SUPPORT", "1") == "1"
+    web_support = os.getenv("TGTEACHER_WEB_SUPPORT", "0") == "1"
     if web_support:
         from tgteacher_bot.db.web_operations import create_question
         try:
@@ -262,7 +262,8 @@ async def help_user_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         logger.exception("HELP: failed to send ack to user_id=%s: %s", user.id, e)
 
     if web_support:
-        return
+        from telegram.ext import ApplicationHandlerStop
+        raise ApplicationHandlerStop
 
     # Готовим отправку в группу
     group_id_str = os.getenv(HELP_GROUP_ID_ENV)
