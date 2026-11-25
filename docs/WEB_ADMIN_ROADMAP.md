@@ -63,7 +63,7 @@ Individual web accounts and server-enforced owner/editor/support roles. Password
 
 ## Phase 9.6 — acceptance and cutover
 
-Run full regression and browser workflows, compare screenshots against the approved references, verify feature parity and rollback plan, then disable legacy admin handlers. No unsupported provider, fictitious stats, automated quality score or dummy success controls.
+Run full regression and browser workflows, compare screenshots against the approved references, verify feature parity and rollback plan, then disable legacy admin handlers. Stale administrative callbacks now receive an explicit retired/denied response in web-only mode. Learner noop pagination remains registered independently. Legacy group support replies are not registered in web-support mode; legacy-mode replies require an approved Telegram administrator. The registration switch and rollback, menus, background jobs and persistence-before-acknowledgment are covered by isolated tests. See [cutover checklist](WEB_ADMIN_CUTOVER.md) for deliberate differences and remaining release gates. No unsupported provider, fictitious stats, automated quality score or dummy success controls.
 
 ## Cutover
 

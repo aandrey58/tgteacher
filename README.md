@@ -394,3 +394,8 @@ Roadmap completion is a code/CI milestone, not a production deployment or verifi
 ### Stage 8 — Release Audit & Deployment
 
 Read [release runbook](docs/RELEASE_RUNBOOK.md) before upgrading. Compose now runs PostgreSQL, Telegram bot and MCP separately. Copy the three example env files, configure secrets and persist the admin list under runtime_cache. MCP is loopback-bound; DB is not exposed. CI builds the release image and checks authenticated MCP discovery and real bot application registration without contacting Telegram. 45 tools remain unchanged. A real OAuth authorization server and staging validation are prerequisites for ChatGPT deployment; no unauthenticated mode.
+
+
+### Веб-администрирование
+
+React-админка работает в отдельном контейнере, использует ту же PostgreSQL и независимые личные учётные записи. См. [план миграции](docs/WEB_ADMIN_ROADMAP.md) и [чек-лист переключения и отката](docs/WEB_ADMIN_CUTOVER.md). До приёмки не выключайте старую админку и не переключайте маршрутизацию вопросов.

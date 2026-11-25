@@ -26,7 +26,7 @@ from telegram.ext import (
 
 from tgteacher_bot.core import paths
 from tgteacher_bot.core.learning_session import LearningApplication
-from tgteacher_bot.core.admin_guard import AdminRegistration
+from tgteacher_bot.core.admin_guard import AdminRegistration, is_admin
 from tgteacher_bot.handlers.admin.admin_panel import get_admin_families_menu, get_admin_menu, register_admin_handlers
 from tgteacher_bot.handlers.admin.admin_status import track_metrics
 from tgteacher_bot.handlers.admin.admin_status_info import register_status_info_handlers
@@ -78,6 +78,24 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+# Prefixes reserved exclusively for the retired administrative UI.
+LEGACY_ADMIN_CALLBACK = r"^(?:admin_|snapshots_|status_info_|payment_option_)"
+ 
+ 
+async def _legacy_admin_retired(update, context):
+    # Respond to stale Telegram keyboards before any generic catalog refresh.
+    if not is_admin(update):
+        await update.callback_query.answer("Недостаточно прав.", show_alert=True)
+    else:
+        await update.callback_query.answer("Админ-панель перенесена в веб. Откройте главное меню.", show_alert=True)
+    raise ApplicationHandlerStop
+ 
+ 
+async def _noop_callback(update, context):
+    # Learner pagination must not depend on legacy admin registration.
+    await update.callback_query.answer()
+ 
+ 
 def get_main_menu(user_id=None):
     admin_ids = set()
     try:
@@ -239,6 +257,7 @@ def _register_handlers(application: Application):
     application.add_handler(CallbackQueryHandler(_refresh_catalog_callback), group=-2)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
+    application.add_handler(CallbackQueryHandler(_noop_callback, pattern="^noop$"))
 
     from tgteacher_bot.handlers.user.reviews import register_review_handlers
     register_review_handlers(application)
@@ -252,6 +271,8 @@ def _register_handlers(application: Application):
         register_admin_handlers(guarded)
         register_status_info_handlers(guarded)
         register_admin_users_handlers(guarded)
+    else:
+        application.add_handler(CallbackQueryHandler(_legacy_admin_retired, pattern=LEGACY_ADMIN_CALLBACK), group=-4)
 
 
 async def _post_startup(application: Application):

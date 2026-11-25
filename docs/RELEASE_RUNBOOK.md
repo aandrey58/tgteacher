@@ -48,6 +48,10 @@ In mcp.env set TGTEACHER_MCP_AUTH_MODE=oauth, TGTEACHER_MCP_RESOURCE_URL=https:/
 
 In an eligible ChatGPT workspace follow the official connection instructions: create a custom MCP app/plugin connection, supply the HTTPS /mcp URL and OAuth configuration, authorize a test account, refresh tool discovery and verify allowed actions. Test reader, editor and publisher roles separately; ensure consent for publishing and paid generation. Do not use "No authentication". Learner Telegram bearer credentials are not integrated into the external OAuth flow; actual ChatGPT learner account linking is a release blocker for that workflow. Existing OAuth introspection intentionally strips learner scopes, so a client_id cannot impersonate a Telegram user. A separate authenticated binding between OAuth subject and Telegram account must be implemented before learner OAuth is enabled.
 
+## Web administration cutover
+
+See [Web admin cutover checklist](WEB_ADMIN_CUTOVER.md). Switch only after the web owner and support team have accepted staging. Mode rollback is distinct from reverting binaries/schema: with the same current release, restore legacy flags and recreate the bot container, keeping PostgreSQL and web workers intact. Never drop data to roll back an interface switch.
+
 ## Release acceptance checklist
 
 - Final GHA tests + release-smoke successful on exact candidate SHA.

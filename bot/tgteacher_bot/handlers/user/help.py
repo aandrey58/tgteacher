@@ -1,6 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, ApplicationHandlerStop, filters
 import os
+from html import escape
 from datetime import datetime, timedelta
 import logging
 import json
@@ -233,7 +234,7 @@ async def help_user_text_handler(update: Update, context: ContextTypes.DEFAULT_T
             await create_question(user.id,text)
         except Exception:
             await update.message.reply_text("Не удалось сохранить вопрос. Попробуйте ещё раз.")
-            return
+            raise ApplicationHandlerStop
     logger.info("HELP: question received user_id=%s", user.id)
     # Чистим промпт, если он есть
     prompt_id = context.user_data.pop(HELP_PROMPT_MESSAGE_ID, None)
@@ -262,7 +263,6 @@ async def help_user_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         logger.exception("HELP: failed to send ack to user_id=%s: %s", user.id, e)
 
     if web_support:
-        from telegram.ext import ApplicationHandlerStop
         raise ApplicationHandlerStop
 
     # Готовим отправку в группу
@@ -287,10 +287,10 @@ async def help_user_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     group_text = (
         f"❓ <b>Новый вопрос</b>\n\n"
         f"<b>Telegram ID:</b> <code>{user_id}</code>\n"
-        f"<b>Имя:</b> {first_name}\n"
-        f"<b>Username:</b> {username}\n"
+        f"<b>Имя:</b> {escape(first_name)}\n"
+        f"<b>Username:</b> {escape(username)}\n"
         f"<b>Время вопроса:</b> {asked_at}\n\n"
-        f"<b>Текст вопроса:</b>\n{text}"
+        f"<b>Текст вопроса:</b>\n{escape(text)}"
     )
 
     try:
@@ -321,6 +321,13 @@ async def help_user_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     save_help_index_to_disk(context)
 
 async def help_group_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Guard direct calls as well as registration; only the configured route may send.
+    if os.getenv("TGTEACHER_WEB_SUPPORT", "0") == "1":
+        return
+    from tgteacher_bot.handlers.admin.admin_list import get_admin_ids
+    sender = update.effective_user
+    if not sender or str(sender.id) not in get_admin_ids():
+        return
     # Обрабатываем ответы админов в группе на сообщение бота с вопросом
     group_id_str = os.getenv(HELP_GROUP_ID_ENV)
     # Получаем сообщение (для групп это обычный message)
@@ -372,10 +379,10 @@ async def help_group_reply_handler(update: Update, context: ContextTypes.DEFAULT
 
     dm_text = (
         '📩 <b>Ответ получен!</b>\n\n'
-        f'<b>Время Вашего вопроса:</b> {asked_at}\n'
-        f'<b>Ваш вопрос:</b> {question_text}\n\n'
+        f'<b>Время Вашего вопроса:</b> {escape(str(asked_at))}\n'
+        f'<b>Ваш вопрос:</b> {escape(str(question_text))}\n\n'
         f'<b>Время ответа:</b> {answered_at}\n'
-        f'<b>Ответ:</b> {answer_text}'
+        f'<b>Ответ:</b> {escape(answer_text)}'
     )
 
     try:
@@ -423,12 +430,13 @@ def register_help_handlers(application):
         group=-3
     )
 
-    # Ответы админов в группе (только текст, по реплаю)
-    application.add_handler(
-        MessageHandler(
-            filters.REPLY,
-            help_group_reply_handler,
-            block=True
-        ),
-        group=-1
-    ) 
+    # Legacy group replies are not registered in web-support mode.
+    if os.getenv("TGTEACHER_WEB_SUPPORT", "0") != "1":
+        application.add_handler(
+            MessageHandler(
+                filters.REPLY,
+                help_group_reply_handler,
+                block=True
+            ),
+            group=-1
+        ) 

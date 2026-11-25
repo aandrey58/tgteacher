@@ -48,6 +48,100 @@ class AdminGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action.await_count,1)
 
 
+
+class CutoverTests(unittest.IsolatedAsyncioTestCase):
+    def build(self, legacy, support):
+        from tgteacher_bot.core import app
+        with patch.dict(os.environ,{"BOT_TOKEN":"123456:ci-only-test-token","TGTEACHER_LEGACY_ADMIN":legacy,"TGTEACHER_WEB_SUPPORT":support}):
+            return app.build_application()
+
+    async def test_handler_inventory_switch_and_rollback(self):
+        import re
+        from tgteacher_bot.core import app
+        def inventory(application):
+            return [(group,h) for group,handlers in application.handlers.items() for h in handlers]
+        legacy=self.build("1","0")
+        web=self.build("0","1")
+        rollback=self.build("1","0")
+        def callbacks(a):
+            return [(g,h.pattern.pattern,h.callback.__name__) for g,h in inventory(a)
+                    if isinstance(h,CallbackQueryHandler) and hasattr(h.pattern,"pattern")]
+        before=callbacks(legacy)
+        after=callbacks(web)
+        self.assertEqual(before,callbacks(rollback))
+        retired=[x for x in before if re.search(r"^\\^(?:admin_|snapshots_|status_info_|payment_option_)",x[1])]
+        self.assertGreater(len(retired),50)
+        self.assertTrue(all(x not in after for x in retired))
+        self.assertEqual([x[2] for x in after if x[1]==app.LEGACY_ADMIN_CALLBACK],["_legacy_admin_retired"])
+        for pattern in ("^main_menu$","^subscription$","^confirm_payment_","^check_payment_","^help$","^help_ask$","^noop$"):
+            self.assertTrue(any(x[1]==pattern for x in after),pattern)
+        self.assertTrue(any(h.callback.__name__=="help_group_reply_handler" for _,h in inventory(legacy)))
+        self.assertFalse(any(h.callback.__name__=="help_group_reply_handler" for _,h in inventory(web)))
+        self.assertTrue(any(h.callback.__name__=="help_user_text_handler" for _,h in inventory(web)))
+        old_names={h.callback.__name__ for _,h in inventory(legacy)}
+        new_names={h.callback.__name__ for _,h in inventory(web)}
+        self.assertIn("start",new_names)
+        self.assertFalse(any(name.startswith("admin_") for name in new_names))
+        self.assertGreater(len(old_names-new_names),30)
+        query=SimpleNamespace(answer=AsyncMock())
+        update=SimpleNamespace(callback_query=query)
+        for allowed in (True,False):
+            with patch.object(app,"is_admin",return_value=allowed):
+                with self.assertRaises(ApplicationHandlerStop):
+                    await app._legacy_admin_retired(update,None)
+        self.assertEqual(query.answer.await_count,2)
+        await app._noop_callback(update,None)
+        self.assertEqual(query.answer.await_count,3)
+
+    async def test_menu_and_web_jobs_independent_of_legacy_registration(self):
+        from tgteacher_bot.core import app
+        with tempfile.TemporaryDirectory() as tmp:
+            admins=Path(tmp)/"admins.txt"
+            admins.write_text("11\\n",encoding="utf-8")
+            with patch.object(app.paths,"admins_path",return_value=admins),patch.dict(os.environ,{"TGTEACHER_LEGACY_ADMIN":"0","TGTEACHER_WEB_ADMIN_URL":"https://example.test/admin"}):
+                for uid in (11,22):
+                    buttons=[b for row in app.get_main_menu(uid).inline_keyboard for b in row]
+                    self.assertNotIn("admin_panel",[b.callback_data for b in buttons])
+                    self.assertEqual(any(b.url=="https://example.test/admin" for b in buttons),uid==11)
+                with patch.dict(os.environ,{"TGTEACHER_LEGACY_ADMIN":"1"}):
+                    self.assertIn("admin_panel",[b.callback_data for row in app.get_main_menu(11).inline_keyboard for b in row])
+        queue=SimpleNamespace(run_repeating=lambda fn,**kwargs: scheduled.append(fn.__name__))
+        scheduled=[]
+        with patch.dict(os.environ,{"TGTEACHER_LEGACY_ADMIN":"0","TGTEACHER_WEB_SUPPORT":"1"}),patch.object(app,"init_db_pg",new=AsyncMock()),patch.object(app,"init_system_snapshots_pg",new=AsyncMock()),patch("tgteacher_bot.utils.families_data.refresh_families_meta",new=AsyncMock()):
+            await app._post_startup(SimpleNamespace(job_queue=queue))
+        self.assertTrue({"delivery_job","snapshot_job","admin_list_job","auto_snapshot_job"}<=set(scheduled))
+
+    async def test_web_help_persists_before_ack_and_stops_other_handlers(self):
+        from tgteacher_bot.handlers.user import help as support
+        calls=[]
+        async def create(uid,text):
+            calls.append(("save",uid,text))
+        async def ack(*args,**kwargs):
+            calls.append(("ack",))
+        message=SimpleNamespace(text="question",message_id=1,delete=AsyncMock(),reply_text=AsyncMock(),chat=SimpleNamespace(send_message=AsyncMock(side_effect=ack)))
+        update=SimpleNamespace(message=message,effective_user=SimpleNamespace(id=11),effective_chat=SimpleNamespace(id=11,type="private"))
+        context=SimpleNamespace(user_data={support.AWAITING_HELP_QUESTION:True},bot=SimpleNamespace(send_message=AsyncMock(),delete_message=AsyncMock()))
+        with patch.dict(os.environ,{"TGTEACHER_WEB_SUPPORT":"1"}),patch.object(support,"mark_user_active_if_needed",new=AsyncMock()),patch("tgteacher_bot.db.web_operations.create_question",new=AsyncMock(side_effect=create)):
+            with self.assertRaises(ApplicationHandlerStop):
+                await support.help_user_text_handler(update,context)
+        self.assertEqual(calls,[("save",11,"question"),("ack",)])
+        self.assertNotIn(support.AWAITING_HELP_QUESTION,context.user_data)
+        context.bot.send_message.assert_not_awaited()
+        context.user_data[support.AWAITING_HELP_QUESTION]=True
+        with patch.dict(os.environ,{"TGTEACHER_WEB_SUPPORT":"1"}),patch.object(support,"mark_user_active_if_needed",new=AsyncMock()),patch("tgteacher_bot.db.web_operations.create_question",new=AsyncMock(side_effect=RuntimeError("DB unavailable"))):
+            with self.assertRaises(ApplicationHandlerStop):
+                await support.help_user_text_handler(update,context)
+        self.assertTrue(context.user_data[support.AWAITING_HELP_QUESTION])
+        self.assertEqual(len(calls),2)
+        message.reply_text.assert_awaited_once()
+        # The old group reply route cannot send in web mode or for a non-admin.
+        with patch.dict(os.environ,{"TGTEACHER_WEB_SUPPORT":"1"}):
+            await support.help_group_reply_handler(update,context)
+        with patch.dict(os.environ,{"TGTEACHER_WEB_SUPPORT":"0"}),patch("tgteacher_bot.handlers.admin.admin_list.get_admin_ids",return_value=[]):
+            await support.help_group_reply_handler(update,context)
+        context.bot.send_message.assert_not_awaited()
+
+
 class PortableMediaTests(unittest.TestCase):
     def test_generated_zip_reimport_rewrites_reserved_names(self):
         import hashlib
