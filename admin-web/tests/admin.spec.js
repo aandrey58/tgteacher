@@ -7,21 +7,22 @@ for (const viewport of [{width:1536,height:960},{width:390,height:844}]) {
   page.on('pageerror',e=>browserErrors.push(e.message));
   await page.setViewportSize(viewport);
   await page.goto('http://127.0.0.1:8080/');
-  await page.getByLabel('Administrator credential').fill('ci-only-web-admin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
-  await page.getByRole('button',{name:'Sign in'}).click();
-  await expect(page.getByRole('heading',{name:'Dashboard',exact:true,level:1})).toBeVisible();
-  await expect(page.getByText('Learning activity',{exact:true})).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang','ru');
+  await page.getByLabel('Ключ администратора').fill('ci-only-web-admin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  await page.getByRole('button',{name:'Войти'}).click();
+  await expect(page.getByRole('heading',{name:'Главная',exact:true,level:1})).toBeVisible();
+  await expect(page.getByText('Активность обучения',{exact:true})).toBeVisible();
   await page.screenshot({path:testInfo.outputPath('dashboard.png'),fullPage:true});
-  for(const [nav,title] of [['Groups','Word Groups'],['Drafts','Drafts'],['Learners','Learners'],['Reviews','Reviews'],['Media','Media'],['TTS','TTS'],['Images','Images'],['Budgets','Budgets'],['Settings','Settings']]){
-    if(viewport.width<760)await page.getByRole('button',{name:'Open menu'}).click();
+  for(const [nav,title] of [['Группы','Группы слов'],['Черновики','Черновики'],['Ученики','Ученики'],['Повторения','Повторения'],['Медиатека','Медиатека'],['Озвучка','Озвучка'],['Изображения','Изображения'],['Бюджеты','Бюджеты'],['Настройки','Настройки']]){
+    if(viewport.width<760)await page.getByRole('button',{name:'Открыть меню'}).click();
     await page.locator('nav').getByRole('button',{name:nav,exact:true}).click();
     await expect(page.getByRole('heading',{name:title,exact:true,level:1})).toBeVisible();
-    await expect(page.getByText('Loading…',{exact:true})).toHaveCount(0);
+    await expect(page.getByText('Загрузка…',{exact:true})).toHaveCount(0);
     await expect(page.getByRole('alert')).toHaveCount(0);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBeTruthy();
-    if(nav==='Groups') {
+    if(nav==='Группы') {
       await expect(page.getByText('Travel essentials',{exact:true}).first()).toBeVisible();
-      const search=page.getByPlaceholder('Search word groups…');
+      const search=page.getByPlaceholder('Поиск групп слов…');
       await search.pressSequentially('passport',{delay:75});
       await expect(search).toBeFocused();
       await expect(search).toHaveValue('passport');
@@ -30,38 +31,38 @@ for (const viewport of [{width:1536,height:960},{width:390,height:844}]) {
       await search.clear();
       await expect(page.getByRole('cell').filter({hasText:'Food & cooking'})).toBeVisible();
     }
-    if(nav==='Media') await expect(page.locator('.asset-card')).toHaveCount(3);
+    if(nav==='Медиатека') await expect(page.locator('.asset-card')).toHaveCount(3);
     await page.screenshot({path:testInfo.outputPath(nav.toLowerCase()+'.png'),fullPage:true});
   }
-  if(viewport.width<760)await page.getByRole('button',{name:'Open menu'}).click();
-  await page.locator('nav').getByRole('button',{name:'Groups',exact:true}).click();
-  await page.getByRole('button',{name:'Create group'}).click();
+  if(viewport.width<760)await page.getByRole('button',{name:'Открыть меню'}).click();
+  await page.locator('nav').getByRole('button',{name:'Группы',exact:true}).click();
+  await page.getByRole('button',{name:'Создать группу'}).click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await page.getByLabel('Lesson source (TGTeacher TXT)').fill('#FAMILY "Browser '+viewport.width+'"\n#WORD ticket\n#TRANSLATION билет\n');
-  await page.getByRole('button',{name:'Create draft',exact:true}).click();
-  await expect(page.getByText('Revision 1',{exact:true})).toBeVisible();
-  await page.getByRole('button',{name:'Visual editor'}).click();
-  await expect(page.getByRole('tab',{name:/Words/})).toBeVisible();
-  await page.getByLabel('translation',{exact:true}).fill('проездной билет');
-  await page.getByRole('button',{name:'Save revision'}).click();
-  await expect(page.getByText('Revision 2',{exact:true})).toBeVisible();
-  await page.getByRole('button',{name:'Validate saved revision'}).click();
-  await expect(page.getByRole('heading',{name:'Saved revision passed validation'})).toBeVisible();
+  await page.getByLabel('Исходный текст урока (TGTeacher TXT)').fill('#FAMILY "Browser '+viewport.width+'"\n#WORD ticket\n#TRANSLATION билет\n');
+  await page.getByRole('button',{name:'Создать черновик',exact:true}).click();
+  await expect(page.getByText('Редакция 1',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Визуальный редактор'}).click();
+  await expect(page.getByRole('tab',{name:/Слова/})).toBeVisible();
+  await page.getByLabel('Перевод',{exact:true}).fill('проездной билет');
+  await page.getByRole('button',{name:'Сохранить редакцию'}).click();
+  await expect(page.getByText('Редакция 2',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Проверить редакцию'}).click();
+  await expect(page.getByRole('heading',{name:'Сохранённая редакция прошла проверку'})).toBeVisible();
   await page.screenshot({path:testInfo.outputPath('editor.png'),fullPage:true});
   page.once('dialog',d=>d.accept());
-  await page.getByRole('button',{name:'Publish',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'Word Groups',exact:true,level:1})).toBeVisible();
-  await page.getByLabel('Filter status').selectOption('Published');
-  await page.getByPlaceholder('Search word groups…').fill('Browser '+viewport.width);
+  await page.getByRole('button',{name:'Опубликовать',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Группы слов',exact:true,level:1})).toBeVisible();
+  await page.getByLabel('Фильтр статуса').selectOption('Published');
+  await page.getByPlaceholder('Поиск групп слов…').fill('Browser '+viewport.width);
   await expect(page.getByRole('cell').filter({hasText:'Browser '+viewport.width}).first()).toBeVisible();
-  await page.getByRole('button',{name:'Open',exact:false}).filter({hasText:'Open'}).first().click();
+  await page.getByRole('button',{name:'Открыть',exact:false}).filter({hasText:'Открыть'}).first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await page.getByRole('button',{name:'Version history'}).click();
-  await page.getByRole('button',{name:'Compare',exact:true}).first().click();
-  await expect(page.getByRole('heading',{name:'Version 1 → 1'})).toBeVisible();
-  await page.getByRole('button',{name:'Close',exact:true}).click();
-  await page.getByRole('button',{name:'Sign out'}).click();
-  await expect(page.getByRole('button',{name:'Sign in'})).toBeVisible();
+  await page.getByRole('button',{name:'История версий'}).click();
+  await page.getByRole('button',{name:'Сравнить',exact:true}).first().click();
+  await expect(page.getByRole('heading',{name:'Версия 1 → 1'})).toBeVisible();
+  await page.getByRole('button',{name:'Закрыть',exact:true}).click();
+  await page.getByRole('button',{name:'Выйти'}).click();
+  await expect(page.getByRole('button',{name:'Войти'})).toBeVisible();
   expect(browserErrors).toEqual([]);
  });
 }
