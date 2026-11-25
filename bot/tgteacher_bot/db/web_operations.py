@@ -22,6 +22,13 @@ async def init_operations(c):
             processed_at TIMESTAMP, result_subscription_until TIMESTAMPTZ
         );
         ALTER TABLE payments ADD COLUMN IF NOT EXISTS result_subscription_until TIMESTAMPTZ;
+        CREATE TABLE IF NOT EXISTS web_system_control (
+            singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK(singleton),
+            auto_snapshots BOOLEAN,
+            capture_requested BOOLEAN NOT NULL DEFAULT false,
+            capture_status TEXT NOT NULL DEFAULT 'idle'
+        );
+        INSERT INTO web_system_control(singleton) VALUES(true) ON CONFLICT DO NOTHING;
         CREATE TABLE IF NOT EXISTS web_support (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
             question TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -89,7 +96,7 @@ async def subscription(user_ids, months=None, revoke=False, days=None, operation
             else:
                 # Stable operation ID prevents accidental replay from the client.
                 await c.execute("SELECT pg_advisory_xact_lock(847233,hashtext($1::text))",str(operation_id))
-                previous=await c.fetchval("SELECT count(*) FROM payments WHERE left(payment_id,length($1))=$1",'webgift_'+str(operation_id)+'_')
+                previous=await c.fetchval("SELECT count(*) FROM payments WHERE left(payment_id,length($1::text))=$1::text",'webgift_'+str(operation_id)+'_')
                 if previous:
                     raise ValueError("Gift operation already applied")
                 rows=await c.fetch("""UPDATE users SET is_subscribed=true,
@@ -359,3 +366,65 @@ def workbook(rows):
     out=io.BytesIO()
     wb.save(out)
     return out.getvalue()
+
+
+async def system_status():
+    import json
+    from tgteacher_bot.handlers.admin.admin_list import get_admin_ids
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        control=dict(await c.fetchrow("SELECT auto_snapshots,capture_requested,capture_status FROM web_system_control WHERE singleton"))
+        row=None
+        if await c.fetchval("SELECT to_regclass('system_snapshots') IS NOT NULL"):
+            row=await c.fetchrow("SELECT ts::text AS ts,data FROM system_snapshots ORDER BY ts DESC LIMIT 1")
+    snapshot=None
+    if row:
+        snapshot={**(json.loads(row["data"]) if isinstance(row["data"],str) else row["data"]),"ts":row["ts"]}
+    return {**control,"snapshot":snapshot,"telegram_admin_count":len(get_admin_ids())}
+
+
+async def set_snapshot_auto(enabled):
+    if type(enabled) is not bool:
+        raise ValueError("Invalid auto-snapshot setting")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        await c.execute("UPDATE web_system_control SET auto_snapshots=$1 WHERE singleton",enabled)
+    return {"enabled":enabled}
+
+
+async def request_snapshot():
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        row=await c.fetchrow("""UPDATE web_system_control SET capture_requested=true,capture_status='queued'
+            WHERE singleton AND NOT capture_requested AND capture_status<>'running' RETURNING capture_status""")
+        if not row:
+            raise ValueError("Snapshot already queued or running")
+    return {"status":"queued"}
+
+
+async def snapshot_job(context):
+    from tgteacher_bot.services.legacy.system_snapshots import capture_and_store_snapshot
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        row=await c.fetchrow("""UPDATE web_system_control SET capture_requested=false,capture_status='running'
+            WHERE singleton AND capture_requested RETURNING singleton""")
+    if not row:
+        return
+    status="failed"
+    try:
+        await capture_and_store_snapshot(context)
+        status="ready"
+    finally:
+        async with pool.acquire() as c:
+            await c.execute("UPDATE web_system_control SET capture_status=$1 WHERE singleton",status)
+
+
+async def learner_answers(uid, family_id, limit=50, offset=0):
+    if type(uid) is not int or type(family_id) is not int or not 1<=limit<=100 or offset<0:
+        raise ValueError("Invalid answer pagination")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        rows=await c.fetch("""SELECT stage_num,task_id,task_idx,is_done,selected_choice_text,is_correct
+            FROM active_user_task_progress WHERE user_id=$1 AND family_idx=$2
+            ORDER BY stage_num,task_idx LIMIT $3 OFFSET $4""",uid,family_id,limit+1,offset)
+    return {"items":[dict(r) for r in rows[:limit]],"next":len(rows)>limit}
