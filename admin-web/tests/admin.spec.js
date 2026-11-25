@@ -141,7 +141,7 @@ test('authenticated admin',async({page,browserName},testInfo)=>{
     const dialog=page.getByRole('dialog',{name:'Рассылки и обращения'});
     await expect(dialog.getByRole('heading',{name:'Новое сообщение'})).toBeVisible();
     await dialog.getByLabel('Текст сообщения').fill('Тест CI '+viewport.width);
-    await dialog.getByText('Прикрепить документ или видео',{exact:true}).click();
+    await dialog.getByText('Прикрепить файл',{exact:true}).click();
     await dialog.getByLabel('Файл',{exact:true}).setInputFiles({name:'ci-guide.txt',mimeType:'text/plain',buffer:Buffer.from('CI fixture')});
     await dialog.getByRole('button',{name:'Загрузить вложение'}).click();
     await expect(dialog.getByText('ci-guide.txt',{exact:false})).toBeVisible();

@@ -195,6 +195,43 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertTrue(client.portal.call(ops.deliver_one,bot))
                     bot.send_document.assert_awaited_once()
                     self.assertEqual(action("support",{}).json()["items"][0]["status"],"answered")
+                    # New media kinds use one explicit Telegram send; never drop a sticker caption.
+                    import subprocess
+                    from PIL import Image
+                    voice=subprocess.run(["ffmpeg","-v","error","-f","lavfi","-i","anullsrc=r=48000:cl=mono","-t","0.25","-c:a","libopus","-f","ogg","pipe:1"],check=True,capture_output=True,timeout=20).stdout
+                    sticker=io.BytesIO()
+                    Image.new("RGBA",(512,256),(255,0,0,128)).save(sticker,format="WEBP",lossless=True)
+                    media_cases=[("audio","clip.mp3",MP3),("voice","note.ogg",voice),("sticker","sticker.webp",sticker.getvalue())]
+                    for kind,filename,data in media_cases:
+                        bad=post_file("upload_attachment?kind="+kind+"&filename="+filename,b"invalid")
+                        self.assertEqual(bad.status_code,400,bad.text)
+                        upload=post_file("upload_attachment?kind="+kind+"&filename="+filename,data)
+                        self.assertEqual(upload.status_code,200,upload.text)
+                        ident=upload.json()["asset_id"]
+                        self.assertEqual(post_file("upload_attachment?kind="+kind+"&filename="+filename,data).json()["asset_id"],ident)
+                        question=client.portal.call(ops.create_question,11,"Media "+kind)
+                        campaign_id=str(uuid.uuid4())
+                        payload={"campaign_id":campaign_id,"target":"support","question_id":question,"text":"Caption" if kind!="sticker" else "","attachment_id":ident}
+                        if kind=="sticker":
+                            self.assertEqual(action("create_campaign",{**payload,"text":"must not disappear"},True).status_code,400)
+                        self.assertEqual(action("create_campaign",payload,True).status_code,200)
+                        sender=AsyncMock()
+                        setattr(bot,"send_"+kind,sender)
+                        self.assertFalse(client.portal.call(ops.deliver_one,bot))
+                        self.assertEqual(action("confirm_campaign",{"campaign_id":campaign_id,"expected_count":1},True).status_code,200)
+                        self.assertTrue(client.portal.call(ops.deliver_one,bot))
+                        sender.assert_awaited_once()
+                        sent=sender.await_args.kwargs
+                        self.assertEqual(sent["chat_id"],11)
+                        self.assertEqual(sent[kind].filename,filename)
+                        if kind=="sticker":
+                            self.assertNotIn("caption",sent)
+                        else:
+                            self.assertEqual(sent["caption"],"Caption")
+                        self.assertFalse(client.portal.call(ops.deliver_one,bot))
+                        self.assertEqual(action("support",{}).json()["items"][0]["status"],"answered")
+                        history=next(x for x in action("campaigns",{}).json()["items"] if x["id"]==campaign_id)
+                        self.assertEqual((history["attachmentName"],history["attachment_kind"],history["sent"]),(filename,kind,1))
                     # Cancelling a superseded failed support reply must not reopen its replacement.
                     from telegram.error import BadRequest
                     question=client.portal.call(ops.create_question,11,"Retry question")

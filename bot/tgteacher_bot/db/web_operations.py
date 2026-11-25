@@ -55,6 +55,15 @@ async def init_operations(c):
             asset_id TEXT PRIMARY KEY, filename TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('video','document')),
             content BYTEA NOT NULL CHECK(octet_length(content) BETWEEN 1 AND 16777216)
         );
+        DO $
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='web_message_attachments'::regclass
+                           AND conname='web_message_attachments_kind_v2_check') THEN
+                ALTER TABLE web_message_attachments DROP CONSTRAINT IF EXISTS web_message_attachments_kind_check;
+                ALTER TABLE web_message_attachments ADD CONSTRAINT web_message_attachments_kind_v2_check
+                    CHECK(kind IN ('video','document','audio','voice','sticker'));
+            END IF;
+        END $;
         CREATE TABLE IF NOT EXISTS web_campaigns (
             id UUID PRIMARY KEY, target TEXT NOT NULL, body TEXT NOT NULL,
             photo_id TEXT REFERENCES image_assets(asset_id), support_id BIGINT REFERENCES web_support(id) ON DELETE CASCADE,
@@ -261,8 +270,12 @@ async def create_campaign(campaign_id, target, text, user_ids=None, photo_id=Non
                 raise ValueError("Campaign ID already used")
             if photo_id and not await c.fetchval("SELECT 1 FROM image_assets WHERE asset_id=$1",photo_id):
                 raise ValueError("Unknown image")
-            if attachment_id and not await c.fetchval("SELECT 1 FROM web_message_attachments WHERE asset_id=$1",attachment_id):
-                raise ValueError("Unknown attachment")
+            if attachment_id:
+                kind=await c.fetchval("SELECT kind FROM web_message_attachments WHERE asset_id=$1",attachment_id)
+                if kind is None:
+                    raise ValueError("Unknown attachment")
+                if kind=="sticker" and text.strip():
+                    raise ValueError("Sticker cannot have a caption; send text separately")
             if target=="support":
                 q=await c.fetchrow("SELECT user_id,status FROM web_support WHERE id=$1 FOR UPDATE",question_id)
                 if not q or q["status"]!="open":
@@ -330,12 +343,14 @@ async def campaigns(offset=0,support_only=False):
                 ORDER BY created_at DESC,id DESC LIMIT 51 OFFSET $1
             )
             SELECT w.id::text AS id,w.target,w.body,w.photo_id,w.attachment_id,w.status,w.created_at::text AS created_at,
+            a.filename AS "attachmentName",a.kind AS attachment_kind,
             count(d.user_id) AS recipients,count(*) FILTER(WHERE d.status='sent') AS sent,
             count(*) FILTER(WHERE d.status='pending') AS pending,count(*) FILTER(WHERE d.status='sending') AS sending,
             count(*) FILTER(WHERE d.status='failed') AS failed,count(*) FILTER(WHERE d.status='uncertain') AS uncertain,
             count(*) FILTER(WHERE d.status='cancelled') AS cancelled
             FROM page w LEFT JOIN web_deliveries d ON d.campaign_id=w.id
-            GROUP BY w.id,w.target,w.body,w.photo_id,w.attachment_id,w.status,w.created_at
+            LEFT JOIN web_message_attachments a ON a.asset_id=w.attachment_id
+            GROUP BY w.id,w.target,w.body,w.photo_id,w.attachment_id,w.status,w.created_at,a.filename,a.kind
             ORDER BY w.created_at DESC,w.id DESC""",offset,support_only)
     return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50}
 
@@ -363,10 +378,14 @@ async def deliver_one(bot):
         elif attachment:
             from telegram import InputFile
             file=InputFile(attachment["content"],filename=attachment["filename"])
-            if attachment["kind"]=="video":
-                await asyncio.wait_for(bot.send_video(chat_id=row["user_id"],video=file,caption=row["body"]),40)
+            kind=attachment["kind"]
+            if kind=="sticker":
+                await asyncio.wait_for(bot.send_sticker(chat_id=row["user_id"],sticker=file),40)
+            elif kind in ("video","document","audio","voice"):
+                sender=getattr(bot,"send_"+kind)
+                await asyncio.wait_for(sender(chat_id=row["user_id"],**{kind:file,"caption":row["body"]}),40)
             else:
-                await asyncio.wait_for(bot.send_document(chat_id=row["user_id"],document=file,caption=row["body"]),40)
+                raise ValueError("Unsupported attachment kind")
         else:
             await asyncio.wait_for(bot.send_message(chat_id=row["user_id"],text=row["body"]),40)
         status="sent"
@@ -561,16 +580,46 @@ async def learner_answers(uid, family_id, limit=50, offset=0):
 
 async def upload_message_attachment(filename,kind,data):
     import hashlib
-    import re
     from pathlib import Path
     if (not isinstance(filename,str) or not 1<=len(filename)<=120 or Path(filename).name!=filename
             or any(ord(c)<32 for c in filename) or "\\" in filename or not 1<=len(data)<=16*1024*1024
-            or kind not in ("video","document")):
+            or kind not in ("video","document","audio","voice","sticker")):
         raise ValueError("Invalid attachment")
     suffix=Path(filename).suffix.lower()
     if kind=="video":
         if suffix!=".mp4" or data[4:8]!=b"ftyp":
             raise ValueError("MP4 required")
+    elif kind=="audio":
+        from tgteacher_bot.services.tts_providers import check_mp3
+        if suffix!=".mp3":
+            raise ValueError("MP3 required")
+        await asyncio.to_thread(check_mp3,data)
+    elif kind=="voice":
+        from mutagen.oggopus import OggOpus
+        if suffix not in (".ogg",".opus"):
+            raise ValueError("OGG Opus required")
+        def validate_voice():
+            from mutagen import MutagenError
+            try:
+                info=OggOpus(io.BytesIO(data)).info
+                if not 0<info.length<=600 or info.channels not in (1,2):
+                    raise ValueError("Invalid Opus duration or channels")
+            except (MutagenError,OSError,ValueError,EOFError) as exc:
+                raise ValueError("Invalid OGG Opus voice") from exc
+        await asyncio.to_thread(validate_voice)
+    elif kind=="sticker":
+        from PIL import Image
+        if suffix!=".webp" or len(data)>512*1024:
+            raise ValueError("Static WebP sticker, maximum 512 KiB required")
+        def validate_sticker():
+            try:
+                with Image.open(io.BytesIO(data),formats=["WEBP"]) as im:
+                    if im.format!="WEBP" or getattr(im,"n_frames",1)!=1 or max(im.size)!=512 or min(im.size)<1:
+                        raise ValueError("Sticker must be static and have one side of 512 pixels")
+                    im.load()
+            except (OSError,ValueError,Image.DecompressionBombError) as exc:
+                raise ValueError("Invalid static WebP sticker") from exc
+        await asyncio.to_thread(validate_sticker)
     elif suffix not in (".pdf",".txt",".zip",".docx",".xlsx",".pptx"):
         raise ValueError("Unsupported document type")
     # Documents are opaque attachments, never executed, parsed or displayed inline.
