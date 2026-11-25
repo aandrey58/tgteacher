@@ -89,11 +89,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify React desktop and mobile flows in Chromium
+      - name: Verify responsive React flows in Chromium and WebKit
         working-directory: admin-web
         run: |
           npm install --no-audit --no-fund
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium webkit
           npx playwright test
       - name: Upload admin browser evidence
         if: always()
