@@ -19,6 +19,9 @@ from tgteacher_bot.db import drafts_repo as drafts, content_versions as versions
 from tgteacher_bot.db import tts_repo as tts, image_repo as images, media_repo as media, user_repo as users, srs_repo as srs
 from tgteacher_bot.db.pool import get_pool
 
+from tgteacher_bot.db import web_operations as ops
+from tgteacher_bot.services.exports import web_transfer as transfer
+
 COOKIE = "tgteacher_admin"
 READ = {
     "family": versions.get_current_content, "draft": drafts.get_draft,
@@ -51,7 +54,14 @@ async def render_source(content):
     return {"source":render_family_txt(candidate)}
 
 
-READ.update({"parse_source":parse_source,"render_source":render_source})
+READ.update({"parse_source":parse_source,"render_source":render_source,
+             "tariffs":ops.tariffs,"campaigns":ops.campaigns,"support":ops.support_list,
+             "reports":ops.reports,"active_subscription_count":ops.active_subscription_count})
+WRITE.update({"bulk_archive":ops.bulk_archive,"subscription":ops.subscription,
+              "delete_learner":users.delete_user_and_progress_pg,"set_tariff":ops.set_tariff,
+              "extend_active":ops.extend_active,"create_campaign":ops.create_campaign,
+              "confirm_campaign":ops.confirm_campaign,"cancel_campaign":ops.cancel_campaign,
+              "close_question":ops.close_question})
 PAGES = {"dashboard","groups","drafts","learners","reviews","media","tts","images","budgets","settings"}
 
 
@@ -76,13 +86,17 @@ def reply(value, status=200):
     return JSONResponse(value,status_code=status,headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"})
 
 
-async def body(request):
+async def read_bytes(request,maximum):
     raw = bytearray()
     async for chunk in request.stream():
-        if len(raw)+len(chunk)>512*1024:
+        if len(raw)+len(chunk)>maximum:
             raise ValueError("Request too large")
         raw.extend(chunk)
-    result=json.loads(raw)
+    return bytes(raw)
+
+
+async def body(request):
+    result=json.loads(await read_bytes(request,512*1024))
     if not isinstance(result,dict):
         raise ValueError("Expected JSON object")
     return result
@@ -285,6 +299,38 @@ def build_app(secret, origin, static_dir=None, initialize=True):
                 raise ValueError("Invalid search or pagination")
             return reply(await page_data(route,offset,query,request.query_params.get("status","All"),
                 request.query_params.get("access","All"),request.query_params.get("sort","updated")))
+        if request.method=="GET" and route in ("export_zip","export_report","template"):
+            if route=="export_zip":
+                ident=int(request.query_params["family_id"])
+                data=await transfer.export_archive(ident)
+                name=f"family-{ident}.zip"
+                mime="application/zip"
+            elif route=="template":
+                data='#FAMILY "New group"\n#WORD ticket\n#TRANSLATION билет\n'.encode()
+                name="lesson-template.txt"
+                mime="text/plain; charset=utf-8"
+            else:
+                family=request.query_params.get("family_id")
+                rows=await ops.reports(request.query_params.get("kind","learners"),
+                                       int(request.query_params.get("days","30")),int(family) if family else None)
+                import asyncio
+                data=await asyncio.to_thread(ops.workbook,rows)
+                name="report.xlsx"
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            return Response(data,media_type=mime,headers={"Content-Disposition":f'attachment; filename="{name}"',"Cache-Control":"no-store"})
+        if request.method=="POST" and route in ("import_zip","upload_media"):
+            if request.headers.get("x-confirm")!="true":
+                raise ValueError("Confirmation required")
+            raw=await read_bytes(request,transfer.MAX_ARCHIVE if route=="import_zip" else transfer.MAX_FILE)
+            status="failed"
+            try:
+                result=await transfer.import_archive(raw) if route=="import_zip" else await transfer.upload_asset(request.query_params.get("kind"),raw)
+                status="ok"
+                return reply(result)
+            finally:
+                pool=await get_pool()
+                async with pool.acquire() as c:
+                    await c.execute("INSERT INTO web_admin_audit(action,status) VALUES($1,$2)",route,status)
         if request.method=="GET" and route=="asset":
             kind=request.query_params.get("kind")
             ident=request.query_params.get("id")
