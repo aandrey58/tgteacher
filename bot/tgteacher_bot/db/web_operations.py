@@ -55,7 +55,7 @@ async def init_operations(c):
             asset_id TEXT PRIMARY KEY, filename TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('video','document')),
             content BYTEA NOT NULL CHECK(octet_length(content) BETWEEN 1 AND 16777216)
         );
-        DO $
+        DO $attachment_migration$
         BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='web_message_attachments'::regclass
                            AND conname='web_message_attachments_kind_v2_check') THEN
@@ -63,7 +63,7 @@ async def init_operations(c):
                 ALTER TABLE web_message_attachments ADD CONSTRAINT web_message_attachments_kind_v2_check
                     CHECK(kind IN ('video','document','audio','voice','sticker'));
             END IF;
-        END $;
+        END $attachment_migration$;
         CREATE TABLE IF NOT EXISTS web_campaigns (
             id UUID PRIMARY KEY, target TEXT NOT NULL, body TEXT NOT NULL,
             photo_id TEXT REFERENCES image_assets(asset_id), support_id BIGINT REFERENCES web_support(id) ON DELETE CASCADE,
