@@ -265,9 +265,10 @@ async def _post_startup(application: Application):
     try:
         jobq = application.job_queue
         if jobq:
-            from tgteacher_bot.db.web_operations import delivery_job, snapshot_job
+            from tgteacher_bot.db.web_operations import delivery_job, snapshot_job, admin_list_job
             jobq.run_repeating(delivery_job, interval=5, first=5, job_kwargs={'max_instances':1})
             jobq.run_repeating(snapshot_job, interval=10, first=10, job_kwargs={'max_instances':1})
+            jobq.run_repeating(admin_list_job, interval=10, first=10, job_kwargs={'max_instances':1})
             jobq.run_repeating(
                 auto_snapshot_job, interval=AUTO_SNAPSHOT_INTERVAL_SECONDS, first=10
             )
