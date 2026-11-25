@@ -249,11 +249,11 @@ def build_app(secret, origin, static_dir=None, initialize=True):
 
     async def login(request):
         if request.headers.get("origin")!=origin:
-            return reply({"error":"Origin rejected"},403)
+            return reply({"error":"Запрос с постороннего сайта отклонён"},403)
         data=await body(request)
         key=data.get("secret")
         if not isinstance(key,str) or not key.isascii() or not hmac.compare_digest(key,secret):
-            return reply({"error":"Invalid credential"},401)
+            return reply({"error":"Неверный ключ администратора"},401)
         token=secrets.token_urlsafe(32)
         pool=await get_pool()
         async with pool.acquire() as c:
@@ -265,9 +265,9 @@ def build_app(secret, origin, static_dir=None, initialize=True):
 
     async def api(request):
         if request.method=="POST" and request.headers.get("origin")!=origin:
-            return reply({"error":"Origin rejected"},403)
+            return reply({"error":"Запрос с постороннего сайта отклонён"},403)
         if not await authorized(request):
-            return reply({"error":"Authentication required"},401)
+            return reply({"error":"Необходимо войти"},401)
         route=request.path_params["route"]
         if route=="session" and request.method=="GET":
             return reply({"authenticated":True})
@@ -293,9 +293,9 @@ def build_app(secret, origin, static_dir=None, initialize=True):
                 raise ValueError("Invalid asset kind")
             filename=mod.asset_filename(ident)
             data=await (tts.get_audio_bytes(filename) if kind=="audio" else images.get_image_bytes(filename))
-            return Response(data,media_type="audio/mpeg" if kind=="audio" else "image/jpeg",headers={"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}) if data else reply({"error":"Not found"},404)
+            return Response(data,media_type="audio/mpeg" if kind=="audio" else "image/jpeg",headers={"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}) if data else reply({"error":"Не найдено"},404)
         if request.method!="POST" or route!="action":
-            return reply({"error":"Not found"},404)
+            return reply({"error":"Не найдено"},404)
         data=await body(request)
         name,args=data.get("action"),data.get("args",{})
         if not isinstance(name,str) or not isinstance(args,dict):
@@ -303,7 +303,7 @@ def build_app(secret, origin, static_dir=None, initialize=True):
         if name in READ:
             return reply(await READ[name](**args))
         if name not in WRITE and name not in ("generate_audio","generate_image","estimate_image"):
-            return reply({"error":"Unknown action"},404)
+            return reply({"error":"Неизвестное действие"},404)
         if name!="estimate_image" and data.get("confirm") is not True:
             raise ValueError("Confirmation required")
         if name=="extend_subscription" and (type(args.get("months")) is not int or not 1<=args["months"]<=12):
@@ -330,9 +330,9 @@ def build_app(secret, origin, static_dir=None, initialize=True):
         try:
             return await (login(request) if request.url.path=="/api/login" else api(request))
         except (ValueError,TypeError,KeyError):
-            return reply({"error":"Invalid request or revision conflict. Check fields and reload."},400)
+            return reply({"error":"Некорректные данные или конфликт редакций. Проверьте поля и обновите страницу."},400)
         except Exception:
-            return reply({"error":"Operation failed"},500)
+            return reply({"error":"Не удалось выполнить операцию"},500)
 
     @asynccontextmanager
     async def lifespan(app):
