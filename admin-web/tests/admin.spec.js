@@ -170,3 +170,59 @@ test('authenticated admin',async({page,browserName},testInfo)=>{
   await expect(page.getByRole('button',{name:'Войти'})).toBeVisible();
   expect(browserErrors).toEqual([]);
 });
+
+test('personal accounts and role boundaries',async({page,browserName},testInfo)=>{
+  const viewport=page.viewportSize();
+  test.skip(!((browserName==='chromium'&&[1536,320].includes(viewport.width))||(browserName==='webkit'&&viewport.width===390)),'representative desktop, minimum phone and WebKit');
+  const root='http://127.0.0.1:8080';
+  const origin={Origin:root};
+  const suffix=browserName+'-'+viewport.width+'-'+Date.now();
+  const password='ci-role-password-12345';
+  const action=(name,args={},confirm=false)=>page.request.post(root+'/api/action',{headers:origin,data:{action:name,args,confirm}});
+  const signIn=async(username,secret)=>{
+    await page.getByLabel('Логин',{exact:true}).fill(username);
+    await page.getByLabel(username?'Пароль':'Ключ администратора',{exact:true}).fill(secret);
+    await page.getByRole('button',{name:'Войти',exact:true}).click();
+  };
+  await page.goto(root);
+  await signIn('','ci-only-web-admin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  await expect(page.getByRole('heading',{name:'Главная',level:1,exact:true})).toBeVisible();
+  for(const role of ['editor','support']){
+    const res=await action('create_account',{username:role+'-'+suffix,password,role},true);
+    expect(res.status()).toBe(200);
+  }
+  const broadcast=await action('create_campaign',{campaign_id:crypto.randomUUID(),target:'all',text:'PRIVATE CI BROADCAST '+suffix},true);
+  expect(broadcast.status()).toBe(200);
+  const campaign=(await broadcast.json()).id;
+  const question=(await (await action('support')).json()).items.find(x=>x.question==='CI role test question');
+  expect(question).toBeTruthy();
+  const prepared=await action('create_campaign',{campaign_id:crypto.randomUUID(),target:'support',question_id:question.id,text:'CI DRAFT '+suffix},true);
+  expect(prepared.status()).toBe(200);
+  await page.getByRole('button',{name:'Выйти',exact:true}).click();
+  await signIn('editor-'+suffix,password);
+  await expect(page.getByRole('heading',{name:'Главная',level:1,exact:true})).toBeVisible();
+  if(viewport.width<=900)await page.getByRole('button',{name:'Открыть меню'}).click();
+  await expect(page.locator('nav').getByRole('button',{name:'Группы',exact:true})).toBeVisible();
+  await expect(page.locator('nav').getByRole('button',{name:'Ученики',exact:true})).toHaveCount(0);
+  await expect(page.locator('nav').getByRole('button',{name:'Настройки',exact:true})).toHaveCount(0);
+  expect((await page.request.get(root+'/api/learners')).status()).toBe(403);
+  if(viewport.width<=900)await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'Выйти',exact:true}).click();
+  await signIn('support-'+suffix,password);
+  await expect(page.getByRole('heading',{name:'Обращения учеников',level:1})).toBeVisible();
+  await expect(page.getByText('CI role test question',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'История ответов',exact:true}).click();
+  const draft=page.locator('article').filter({hasText:'CI DRAFT '+suffix});
+  await expect(draft).toBeVisible();
+  await expect(page.getByText('PRIVATE CI BROADCAST '+suffix,{exact:true})).toHaveCount(0);
+  await draft.getByRole('button',{name:'Открыть подтверждение'}).click();
+  await expect(page.getByRole('heading',{name:'Подтверждение ответа'})).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath('support-role.png'),fullPage:true});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBeTruthy();
+  expect((await action('confirm_campaign',{campaign_id:campaign,expected_count:1},true)).status()).toBe(403);
+  page.once('dialog',d=>d.accept());
+  await page.getByRole('button',{name:'Отменить черновик'}).click();
+  await expect(page.getByRole('heading',{name:'Подтверждение ответа'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Выйти',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Войти',exact:true})).toBeVisible();
+});

@@ -461,9 +461,11 @@ def build_app(secret, origin, static_dir=None, initialize=True, allow_recovery=T
             elif name=="generate_audio":
                 result=await tts.generate_batch(args["items"],args["max_cost_microusd"])
             elif name=="create_account":
-                result=await identity.create(await get_pool(),**args)
+                result=await identity.create(await get_pool(),actor,**args)
             elif name=="update_account":
-                result=await identity.update(await get_pool(),**args)
+                if "own_change" in args:
+                    raise ValueError("Unexpected update parameter")
+                result=await identity.update(await get_pool(),actor,**args)
             elif name=="change_own_password":
                 result=await identity.own_password(await get_pool(),actor,**args)
             else:
@@ -477,6 +479,8 @@ def build_app(secret, origin, static_dir=None, initialize=True, allow_recovery=T
     async def safe(request):
         try:
             return await (login(request) if request.url.path=="/api/login" else api(request))
+        except PermissionError:
+            return reply({"error":"Полномочия администратора изменились"},403)
         except (ValueError,TypeError,KeyError):
             return reply({"error":"Некорректные данные или конфликт редакций. Проверьте поля и обновите страницу."},400)
         except Exception:

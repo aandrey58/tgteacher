@@ -77,7 +77,17 @@ async def accounts(pool,offset=0):
     return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50}
 
 
-async def create(pool,username,password,role):
+async def check_actor(c,actor,owner_required=True):
+    if actor["id"] is None:
+        if actor["role"]!="owner":
+            raise ValueError("Invalid recovery actor")
+        return
+    row=await c.fetchrow("SELECT role,enabled,revision FROM web_admin_accounts WHERE id=$1 FOR UPDATE",actor["id"])
+    if not row or not row["enabled"] or row["revision"]!=actor["revision"] or row["role"]!=actor["role"] or (owner_required and row["role"]!="owner"):
+        raise PermissionError("Administrator access changed")
+
+
+async def create(pool,actor,username,password,role):
     username=valid_username(username)
     if username=="recovery" or not isinstance(role,str) or role not in ROLES:
         raise ValueError("Invalid role or reserved username")
@@ -85,6 +95,7 @@ async def create(pool,username,password,role):
     async with pool.acquire() as c:
         async with c.transaction():
             await c.execute("SELECT pg_advisory_xact_lock(847231,96)")
+            await check_actor(c,actor)
             if await c.fetchval("SELECT count(*) FROM web_admin_accounts")>=500:
                 raise ValueError("Account limit")
             row=await c.fetchrow("""INSERT INTO web_admin_accounts(username,password_hash,role) VALUES($1,$2,$3)
@@ -94,13 +105,16 @@ async def create(pool,username,password,role):
             return dict(row)
 
 
-async def update(pool,account_id,expected_revision,role,enabled,password=None):
+async def update(pool,actor,account_id,expected_revision,role,enabled,password=None,*,own_change=False):
     if type(account_id) is not int or account_id<1 or type(expected_revision) is not int or expected_revision<1 or not isinstance(role,str) or role not in ROLES or type(enabled) is not bool:
         raise ValueError("Invalid account update")
     hashed=await asyncio.to_thread(encode_password,password) if password is not None else None
     async with pool.acquire() as c:
         async with c.transaction():
             await c.execute("SELECT pg_advisory_xact_lock(847231,96)")
+            if own_change and (actor["id"]!=account_id or role!=actor["role"] or not enabled or password is None):
+                raise PermissionError("Invalid self-service update")
+            await check_actor(c,actor,owner_required=not own_change)
             row=await c.fetchrow("SELECT role,enabled,revision FROM web_admin_accounts WHERE id=$1 FOR UPDATE",account_id)
             if not row or row["revision"]!=expected_revision:
                 raise ValueError("Account revision conflict")
@@ -120,4 +134,4 @@ async def own_password(pool,actor,current_password,new_password):
         row=await c.fetchrow("SELECT password_hash,role,enabled,revision FROM web_admin_accounts WHERE id=$1",actor["id"])
     if not row or not row["enabled"] or row["revision"]!=actor["revision"] or not await asyncio.to_thread(verify_password,current_password,row["password_hash"]):
         raise ValueError("Invalid current password")
-    return await update(pool,actor["id"],row["revision"],row["role"],True,new_password)
+    return await update(pool,actor,actor["id"],row["revision"],row["role"],True,new_password,own_change=True)

@@ -290,6 +290,14 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertEqual(client.get("/api/session").status_code,401)
                     self.assertEqual(login_as("content-editor").status_code,401)
                     self.assertEqual(login_as("first-owner").status_code,200)
+                    # A revoked owner cannot use an actor snapshot captured before demotion.
+                    from tgteacher_bot.db import web_identity
+                    recovery={"id":None,"role":"owner","username":"recovery","revision":0}
+                    second=client.portal.call(web_identity.create,pool,recovery,"second-owner",password,"owner")
+                    old_actor={"id":second["id"],"role":"owner","username":"second-owner","revision":second["revision"]}
+                    client.portal.call(web_identity.update,pool,recovery,second["id"],second["revision"],"editor",True)
+                    with self.assertRaises(PermissionError):
+                        client.portal.call(web_identity.create,pool,old_actor,"forbidden-owner",password,"owner")
                     cookie=client.cookies.get(web_admin.COOKIE)
                     self.assertEqual(client.post("/api/logout",json={},headers=headers).status_code,200)
                     client.cookies.set(web_admin.COOKIE,cookie)

@@ -5,7 +5,7 @@ import io
 import os
 import uuid
 from PIL import Image, ImageDraw
-from tgteacher_bot.db import user_repo as users, families_repo as families, drafts_repo as drafts
+from tgteacher_bot.db import user_repo as users, families_repo as families, drafts_repo as drafts, web_operations as ops
 from tgteacher_bot.db.pool import get_pool
 
 async def main():
@@ -45,6 +45,7 @@ async def main():
         await users.set_stage2_answer_pg(uid,ids[i],0,groups[i][3][0],True)
         if i==2:
             await users.extend_user_subscription_pg(uid,1)
+    await ops.create_question(900000000,"CI role test question")
     # Locally generated illustrations are CI-only, never charged to a provider.
     async with pool.acquire() as c:
         for i,(label,color) in enumerate([("Ticket","#2563eb"),("Cooking","#0d9488"),("Work","#7c3aed")]):
