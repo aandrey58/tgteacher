@@ -52,3 +52,12 @@ export function LearnerAnswers({act,run,uid,groups,busy}){
  useEffect(()=>{setData(null);if(family)run(async()=>setData(await act('learner_answers',{uid,family_id:Number(family),offset,limit:50})))},[family,offset,uid]);
  return <section className="panel"><h2>Ответы по заданиям</h2><label>Группа ученика<select value={family} onChange={e=>{setFamily(e.target.value);setOffset(0)}}><option value="">Выберите группу</option>{groups.map(g=><option value={g.family_id} key={g.family_id}>{g.name}</option>)}</select></label>{data&&<>{data.items.map(r=><div className="operation-record" key={r.task_id+'-'+r.stage_num}><b>Этап {r.stage_num} · задание {r.task_idx+1}</b><small>ID {r.task_id} · {r.is_correct===null?'Без оценки':r.is_correct===1?'Верно':'Неверно'}</small><p className="message-text">{r.selected_choice_text??'—'}</p></div>)}{!data.items.length&&<p>Нет записей.</p>}<div className="actions"><button disabled={busy||!offset} onClick={()=>setOffset(Math.max(0,offset-50))}>Назад</button><button disabled={busy||!data.next} onClick={()=>setOffset(offset+50)}>Далее</button></div></>}</section>
 }
+
+
+export function AdminListPanel({act,run,busy}){
+ const [state,setState]=useState(null),[draft,setDraft]=useState('');
+ async function load(){const d=await act('admin_list');setState(d);setDraft(d.ids.join('\n'))}
+ useEffect(()=>{run(load)},[]);
+ async function save(){if(!state||!window.confirm('Изменить список Telegram-администраторов? Ключ веб-доступа не изменится.'))return;await run(async()=>{const ids=draft.split(/\s+/).filter(Boolean).map(Number);const r=await act('change_admin_list',{expected_ids:state.ids.map(Number),desired_ids:ids},true);setState({...state,status:r.status})})}
+ return <section className="panel"><h2>Telegram-администраторы</h2>{state?<><p className="muted">Список определяет доступ к старым административным обработчикам и кнопке веб-админки. Он не выдаёт веб-ключ.</p><p>Статус изменения: {({idle:'Нет изменений',queued:'В очереди',running:'Выполняется',ready:'Применено',failed:'Ошибка',uncertain:'Результат неизвестен'}[state.status]||state.status)}</p><label>Telegram ID, по одному на строку<textarea value={draft} onChange={e=>setDraft(e.target.value)}/></label><div className="actions"><button disabled={busy||['queued','running'].includes(state.status)} onClick={save}>Сохранить список</button><button onClick={()=>run(load)}>Обновить список</button></div><small>Для применения должен работать бот. Последнего администратора удалить нельзя.</small></>:<p>Загрузка…</p>}</section>
+}
