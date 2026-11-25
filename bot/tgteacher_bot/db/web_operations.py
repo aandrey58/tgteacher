@@ -15,6 +15,13 @@ TARGETS = {"all":"TRUE","subs":VIP,"nosubs":f"NOT coalesce(({VIP}),false)"}
 
 async def init_operations(c):
     await c.execute("""
+        CREATE TABLE IF NOT EXISTS payments (
+            id SERIAL PRIMARY KEY, payment_id VARCHAR(255) UNIQUE NOT NULL, user_id BIGINT NOT NULL,
+            months INTEGER NOT NULL, amount INTEGER NOT NULL, status VARCHAR(50) NOT NULL, payment_url TEXT,
+            processed BOOLEAN DEFAULT FALSE, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(),
+            processed_at TIMESTAMP, result_subscription_until TIMESTAMPTZ
+        );
+        ALTER TABLE payments ADD COLUMN IF NOT EXISTS result_subscription_until TIMESTAMPTZ;
         CREATE TABLE IF NOT EXISTS web_support (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
             question TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -59,28 +66,48 @@ async def bulk_archive(family_ids, archived):
     return {"count":len(rows)}
 
 
-async def subscription(user_ids, months=None, revoke=False):
+async def subscription(user_ids, months=None, revoke=False, days=None, operation_id=None):
     selected=ids(user_ids)
-    if type(revoke) is not bool or (not revoke and (type(months) is not int or not 1<=months<=12)) or (revoke and months is not None):
+    if type(revoke) is not bool:
         raise ValueError("Invalid subscription change")
+    if revoke:
+        if days is not None or months is not None:
+            raise ValueError("Revoke does not accept duration")
+    else:
+        if days is None and type(months) is int and 1<=months<=12:
+            days=months*30
+        elif months is not None:
+            raise ValueError("Use one duration field")
+        if type(days) is not int or not 1<=days<=365:
+            raise ValueError("Invalid gift duration")
+        operation_id=uuid.UUID(operation_id) if operation_id else uuid.uuid4()
     pool=await get_pool()
     async with pool.acquire() as c:
         async with c.transaction():
             if revoke:
                 rows=await c.fetch("UPDATE users SET is_subscribed=false,subscription_until=NULL WHERE user_id=ANY($1::bigint[]) RETURNING user_id",selected)
             else:
+                # Stable operation ID prevents accidental replay from the client.
+                await c.execute("SELECT pg_advisory_xact_lock(847233,hashtext($1::text))",str(operation_id))
+                previous=await c.fetchval("SELECT count(*) FROM payments WHERE left(payment_id,length($1))=$1",'webgift_'+str(operation_id)+'_')
+                if previous:
+                    raise ValueError("Gift operation already applied")
                 rows=await c.fetch("""UPDATE users SET is_subscribed=true,
-                    subscription_until=greatest(now(),coalesce(subscription_until,now()))+make_interval(days=>30*$2::int),
-                    subscription_count=coalesce(subscription_count,0)+$2 WHERE user_id=ANY($1::bigint[]) RETURNING user_id""",selected,months)
+                    subscription_until=CASE WHEN is_subscribed THEN greatest(now(),coalesce(subscription_until,now())) ELSE now() END+make_interval(days=>$2::int),
+                    subscription_count=coalesce(subscription_count,0)+1 WHERE user_id=ANY($1::bigint[]) RETURNING user_id,subscription_until""",selected,days)
+                for row in rows:
+                    await c.execute("""INSERT INTO payments(payment_id,user_id,months,amount,status,processed,processed_at,result_subscription_until)
+                        VALUES($1,$2,$3,0,'gift',true,now(),$4)""",
+                        f"webgift_{operation_id}_{row['user_id']}",row["user_id"],(days+29)//30,row["subscription_until"])
             if len(rows)!=len(selected):
                 raise ValueError("Learner not found")
     return {"count":len(rows)}
 
 
 async def set_tariff(months, amount=None, remove=False):
-    if type(months) is not int or not 1<=months<=36 or type(remove) is not bool:
+    if type(months) is not int or not 1<=months<=60 or type(remove) is not bool:
         raise ValueError("Invalid tariff")
-    if not remove and (type(amount) is not int or not 1<=amount<=1000000):
+    if not remove and (type(amount) is not int or not 1<=amount<=100000):
         raise ValueError("Invalid amount in RUB")
     pool=await get_pool()
     async with pool.acquire() as c:
@@ -151,7 +178,9 @@ async def create_campaign(campaign_id, target, text, user_ids=None, photo_id=Non
                 selected=[q["user_id"]]
             await c.execute("INSERT INTO web_campaigns(id,target,body,photo_id,support_id) VALUES($1,$2,$3,$4,$5)",ident,target,text.strip(),photo_id,question_id)
             if target in TARGETS:
-                await c.execute(f"INSERT INTO web_deliveries(campaign_id,user_id) SELECT $1,user_id FROM users WHERE {TARGETS[target]}",ident)
+                from tgteacher_bot.handlers.admin.admin_list import get_admin_ids
+                excluded=[int(i) for i in get_admin_ids() if str(i).isdigit()]
+                await c.execute(f"INSERT INTO web_deliveries(campaign_id,user_id) SELECT $1,user_id FROM users WHERE ({TARGETS[target]}) AND NOT (user_id=ANY($2::bigint[]))",ident,excluded)
             else:
                 await c.execute("INSERT INTO web_deliveries(campaign_id,user_id) SELECT $1,user_id FROM users WHERE user_id=ANY($2::bigint[])",ident,selected)
             count=await c.fetchval("SELECT count(*) FROM web_deliveries WHERE campaign_id=$1",ident)
