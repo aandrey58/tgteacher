@@ -313,7 +313,8 @@ def build_app(secret, origin, static_dir=None, initialize=True):
             else:
                 family=request.query_params.get("family_id")
                 rows=await ops.reports(request.query_params.get("kind","learners"),
-                                       int(request.query_params.get("days","30")),int(family) if family else None)
+                                       int(request.query_params.get("days","30")),int(family) if family else None,
+                                       request.query_params.get("start_date"),request.query_params.get("end_date"))
                 import asyncio
                 data=await asyncio.to_thread(ops.workbook,rows)
                 name="report.xlsx"
