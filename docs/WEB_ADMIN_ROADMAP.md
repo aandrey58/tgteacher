@@ -39,7 +39,19 @@ Acceptance: complete authenticated workflow and all ten sections at 320, 375, 39
 
 ## Phase 9.4 — feature parity before cutover
 
-Bring ZIP import/export, bulk operations, remaining legacy user/subscription/account actions, admin messaging/help workflows, reports and operational health to the web after inventorying actual Telegram admin handlers. Add authenticated media upload and remaining attachment workflows.
+Inventory: admin_panel (groups, template, archive, ZIP export, broadcast, status/logs/snapshots); admin_users and nested search/progress/inactive handlers; sub_pay and sub_gift (tariffs, exact-day gifts, revoke, extend active subscriptions, payment history); private_message (text/photo/video/document); help (group reply index); admin_list (Telegram IDs).
+
+Implemented web equivalents:
+- Groups: bounded standard ZIP import to an unpublished draft, TXT template, ZIP export of current version, atomic bulk archive/restore.
+- Learners: search, selected bulk gift/revoke, single account deletion, detailed current task answers, exact-day gifts with zero-amount payment history and operation-ID replay guard. Existing 45 MCP tools unchanged.
+- Subscriptions: four tariffs maximum, 1–60 months and 1–100000 RUB, active subscriber extension by days with count confirmation.
+- Communications: persistent recipient snapshots, text/photo/MP4/approved documents, single/multi-recipient delivery, draft preview/confirm/cancel, per-recipient status; worker runs in polling bot with no token in web container. Ambiguous sends never automatically retried. Global broadcasts exclude legacy admins.
+- Support: text question persistence before acknowledgment, text replies, close, queue status. Enable TGTEACHER_WEB_SUPPORT=1 only once web support is staffed. Existing legacy questions remain in the Telegram help index, not silently imported. Legacy mode remains available until acceptance.
+- Reports: read-only XLSX exports and preview for learners/new/inactive, group progress, database payment history, system snapshots. Date filters for new/payments/system, relative inactivity period. No live payment refresh or spreadsheet formula injection.
+- Settings: bot-owned snapshot requests, auto-snapshot control, latest measured metrics; queued revision-checked atomic updates to legacy Telegram administrator IDs. Web credential stays independent. Existing web audit log remains available.
+- Media: bounded PNG/JPEG/WebP/MP3 uploads to shared immutable asset tables; message documents/video are separate, opaque attachments; no inline execution or arbitrary external URL downloads.
+
+Limits and acceptance gates: ZIP is limited to 32 MiB compressed, 64 MiB expanded, 501 entries, flat or one-level lesson directory and UTF-8 TXT; legacy non-standard Windows filename recovery is not guaranteed. Uploaded message documents/video <=16 MiB; web support replies are text-only at this milestone. Historical Telegram help attachments/old index and raw bot logs are not migrated; raw logs may contain secrets/PII, use protected operator access until redacted observability in 9.5. Full external payment reconciliation, physical device testing, independent per-admin identity and final cutover remain separate. No production deploy or real Telegram send in CI. Run backend and all browser projects before declaring complete.
 
 ## Phase 9.5 — security and reliability
 
