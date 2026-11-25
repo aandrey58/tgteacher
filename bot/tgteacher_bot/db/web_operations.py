@@ -87,6 +87,8 @@ async def init_operations(c):
     """)
     from tgteacher_bot.db.payment_orders import init_orders
     await init_orders(c)
+    from tgteacher_bot.db.stars_repo import init_stars
+    await init_stars(c)
 
 
 def ids(value):
@@ -488,9 +490,11 @@ async def reports(kind="learners", days=30, family_id=None, start_date=None, end
         elif kind=="payments":
             if not await c.fetchval("SELECT to_regclass('payments') IS NOT NULL"):
                 return []
-            rows=await c.fetch(f"""SELECT payment_id,user_id::text AS user_id,months,amount AS amount_kopecks,status,
-                created_at::text AS created_at FROM payments WHERE {recent("created_at")}
-                ORDER BY created_at DESC LIMIT 10001""",*params)
+            rows=await c.fetch(f"""SELECT payment_id,user_id::text AS user_id,months,amount_kopecks,amount_stars,currency,status,created_at::text AS created_at
+                FROM (SELECT payment_id,user_id,months,amount AS amount_kopecks,NULL::integer AS amount_stars,'RUB' AS currency,status,created_at
+                    FROM payments UNION ALL SELECT charge_id,user_id,months,NULL::integer,amount,'XTR',state,coalesce(paid_at,refunded_at)
+                    FROM stars_orders WHERE state IN ('paid','refunded')) p
+                WHERE {recent("created_at")} ORDER BY p.created_at DESC LIMIT 10001""",*params)
         elif kind=="system":
             if not await c.fetchval("SELECT to_regclass('system_snapshots') IS NOT NULL"):
                 return []
@@ -508,7 +512,7 @@ def workbook(rows):
     ws=wb.create_sheet("Отчёт")
     if rows:
         keys=list(rows[0])
-        titles={'user_id':'Telegram ID','username':'Имя пользователя','first_name':'Имя','last_name':'Фамилия','registered_at':'Регистрация','last_active_at':'Последняя активность','subscription_until':'VIP до','is_subscribed':'Флаг подписки','stage_num':'Этап','completed':'Выполнено','correct':'Верно','payment_id':'ID платежа','months':'Месяцы','amount_kopecks':'Сумма, коп.','status':'Статус','created_at':'Дата создания','ts':'Дата снимка','data':'Данные снимка'}
+        titles={'user_id':'Telegram ID','username':'Имя пользователя','first_name':'Имя','last_name':'Фамилия','registered_at':'Регистрация','last_active_at':'Последняя активность','subscription_until':'VIP до','is_subscribed':'Флаг подписки','stage_num':'Этап','completed':'Выполнено','correct':'Верно','payment_id':'ID платежа','months':'Месяцы','amount_kopecks':'Сумма, коп.','amount_stars':'Сумма, Stars','currency':'Валюта','status':'Статус','created_at':'Дата создания','ts':'Дата снимка','data':'Данные снимка'}
         ws.append([titles.get(k,k) for k in keys])
         for row in rows:
             # Do not let user-provided text become executable spreadsheet formulas.

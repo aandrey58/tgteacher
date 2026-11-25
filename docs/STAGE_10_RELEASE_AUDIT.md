@@ -84,3 +84,7 @@ docker compose exec bot python -m scripts.reconcile_payments reconcile USER_ID O
 ```
 
 An unbound order with no provable provider ID remains blocked for manual merchant resolution; no guessed cancellation or re-creation. Refund observations are not a refund command, nor automatic entitlement revocation. These are manual reconciliation facilities, not automatic provider polling or a completed refund business policy.
+
+### 10.2a — Stars implementation
+
+Separate XTR tariffs and order/charge/refund ledger; 30-minute quote, private invoice, exact pre-checkout identity/amount/currency, one checkout per invoice, transactional idempotent VIP grant after successful_payment. Refund events record evidence, not automatic subtraction from mixed access. Previously authorized payments are processed even if sales are disabled. One-off 30 days per month, not recurring. No default invented price. Owner-only web tariff management and currency-separated payment export/history. TGTEACHER_STARS_ENABLED defaults to 0. Operator reconciliation for missed Telegram events, refund initiation and independent YooKassa checkout remain open. CI confirmation pending.

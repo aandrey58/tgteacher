@@ -70,13 +70,15 @@ async def buy_subscription_placeholder(update: Update, context: ContextTypes.DEF
     from tgteacher_bot.db.payment_orders import open_orders
     if not private_owner(update):
         return
+    from tgteacher_bot.handlers.user.stars import enabled
+    from tgteacher_bot.db.stars_repo import tariffs
     active=await open_orders(query.from_user.id)
-    if active:
-        buttons=[[InlineKeyboardButton("Заказ "+str(row["id"])[:8],callback_data="check_payment_"+str(row["id"]))] for row in active]
-        buttons.append([InlineKeyboardButton("Назад",callback_data="subscription")])
-        await query.edit_message_text("Сначала проверьте существующий заказ. При неопределённом результате обратитесь в поддержку.",reply_markup=InlineKeyboardMarkup(buttons))
-        return
-    await query.edit_message_text("Новые покупки временно недоступны. Ранее оплаченные заказы можно проверить.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад",callback_data="subscription")]]))
+    options=await tariffs() if enabled() else []
+    buttons=[[InlineKeyboardButton(f"{r['months']} мес. · {r['amount']} ⭐",callback_data=f"stars_buy_{r['months']}_{r['amount']}")] for r in options]
+    buttons.extend([[InlineKeyboardButton("Прежний заказ "+str(row["id"])[:8],callback_data="check_payment_"+str(row["id"]))] for row in active])
+    buttons.append([InlineKeyboardButton("Назад",callback_data="subscription")])
+    text="Выберите разовую покупку VIP за Telegram Stars." if options else "Новые покупки временно недоступны."
+    await query.edit_message_text(text,reply_markup=InlineKeyboardMarkup(buttons))
 
 @track_metrics
 async def buy_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,19 +109,18 @@ async def subscription_history_placeholder(update: Update, context: ContextTypes
         async with pool.acquire() as conn:
             # Получаем историю платежей пользователя
             rows = await conn.fetch('''
-                SELECT payment_id, months, amount, status, created_at, processed
-                FROM payments 
-                WHERE user_id = $1 
-                ORDER BY created_at DESC 
-                LIMIT 10
+                SELECT * FROM (
+                    SELECT payment_id,months,amount,status,created_at,'RUB' AS currency FROM payments WHERE user_id=$1
+                    UNION ALL SELECT charge_id,months,amount,state,coalesce(paid_at,refunded_at),'XTR'
+                    FROM stars_orders WHERE user_id=$1 AND state IN ('paid','refunded')
+                ) p ORDER BY created_at DESC LIMIT 10
             ''', user_id)
             
             # Получаем общую статистику
             stats = await conn.fetchrow('''
                 SELECT 
-                    COUNT(*) as total_payments
-                FROM payments 
-                WHERE user_id = $1
+                    (SELECT count(*) FROM payments WHERE user_id=$1)+
+                    (SELECT count(*) FROM stars_orders WHERE user_id=$1 AND state IN ('paid','refunded')) AS total_payments
             ''', user_id)
             
         if not rows:
@@ -142,10 +143,11 @@ async def subscription_history_placeholder(update: Update, context: ContextTypes
             # Последние платежи
             text += f'<b>Последние платежи:</b>\n'
             for i, row in enumerate(rows[:5], 1):  # Показываем только 5 последних
-                amount_rub = row['amount'] / 100
+                price = f"{row['amount']} ⭐" if row['currency']=='XTR' else f"{row['amount']/100:.2f} ₽"
+                suffix = ' · возврат' if row['status']=='refunded' else ''
                 date = row['created_at'].strftime('%d.%m.%Y %H:%M')
                 # Без эмодзи статусов и обработанности
-                text += f'{i}. {date} - {amount_rub}₽ ({row["months"]} мес.)\n'
+                text += f'{i}. {date} - {price} ({row["months"]} мес.){suffix}\n'
             
             remaining = max(0, (total_payments or 0) - 5)
             if remaining > 0:
@@ -167,6 +169,8 @@ async def subscription_history_placeholder(update: Update, context: ContextTypes
 
 
 def register_subscription_handlers(application: Application):
+    from tgteacher_bot.handlers.user.stars import register
+    register(application)
     application.add_handler(CallbackQueryHandler(subscription_callback, pattern='^subscription$'))
     application.add_handler(CallbackQueryHandler(buy_subscription_placeholder, pattern='^buy_subscription$'))
     application.add_handler(CallbackQueryHandler(buy_option_callback, pattern='^buy_option_'))

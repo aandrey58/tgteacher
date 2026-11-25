@@ -22,7 +22,7 @@ from tgteacher_bot.db import drafts_repo as drafts, content_versions as versions
 from tgteacher_bot.db import tts_repo as tts, image_repo as images, media_repo as media, user_repo as users, srs_repo as srs
 from tgteacher_bot.db.pool import get_pool
 
-from tgteacher_bot.db import web_operations as ops, web_identity as identity
+from tgteacher_bot.db import web_operations as ops, web_identity as identity, stars_repo as stars
 from tgteacher_bot.services.exports import web_transfer as transfer
 
 COOKIE = "tgteacher_admin"
@@ -60,11 +60,11 @@ async def render_source(content):
 from tgteacher_bot.services.legacy.safe_events import recent as safe_system_events
 
 READ.update({"safe_system_events":safe_system_events,"parse_source":parse_source,"render_source":render_source,
-             "tariffs":ops.tariffs,"campaigns":ops.campaigns,"support":ops.support_list,
+             "tariffs":ops.tariffs,"stars_tariffs":stars.tariffs,"campaigns":ops.campaigns,"support":ops.support_list,
              "reports":ops.reports,"active_subscription_count":ops.active_subscription_count,
              "system_status":ops.system_status,"learner_answers":ops.learner_answers,"admin_list":ops.admin_list})
 WRITE.update({"bulk_archive":ops.bulk_archive,"subscription":ops.subscription,
-              "delete_learner":users.delete_user_and_progress_pg,"set_tariff":ops.set_tariff,
+              "delete_learner":users.delete_user_and_progress_pg,"set_tariff":ops.set_tariff,"set_stars_tariff":stars.set_tariff,
               "extend_active":ops.extend_active,"create_campaign":ops.create_campaign,
               "confirm_campaign":ops.confirm_campaign,"cancel_campaign":ops.cancel_campaign,
               "close_question":ops.close_question,"set_snapshot_auto":ops.set_snapshot_auto,"request_snapshot":ops.request_snapshot,"change_admin_list":ops.change_admin_list})
