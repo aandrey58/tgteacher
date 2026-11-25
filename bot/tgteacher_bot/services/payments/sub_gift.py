@@ -16,6 +16,7 @@ async def gift_subscription_callback(update: Update, context: ContextTypes.DEFAU
     
     # Извлекаем user_id из callback_data
     user_id = int(query.data.replace('admin_gift_subscription_', ''))
+    clear_gift_subscription_context(context.user_data)
     context.user_data['gift_subscription_user_id'] = user_id
     
     # Сохраняем информацию о том, откуда пришли
@@ -247,14 +248,14 @@ async def return_to_user_profile(update, context, user_id):
 
 def clear_gift_subscription_context(user_data):
     """Очистка контекста подарка подписки"""
-    for key in ['gift_subscription_user_id', 'gift_subscription_days', 'gift_subscription_source', AWAITING_SUBSCRIPTION_DAYS, 'gift_subscription_instruction_message_id']:
+    for key in ['gift_subscription_user_id', 'gift_subscription_days', 'gift_subscription_source', AWAITING_SUBSCRIPTION_DAYS, 'gift_subscription_instruction_message_id', 'gift_subscription_operation']:
         user_data.pop(key, None)
 
 def register_sub_gift_handlers(application):
     """Регистрация обработчиков управления подписками"""
     application.add_handler(CallbackQueryHandler(gift_subscription_callback, pattern='^admin_gift_subscription_\\d+$'))
     application.add_handler(CallbackQueryHandler(gift_subscription_cancel_callback, pattern='^admin_gift_subscription_cancel$'))
-    application.add_handler(CallbackQueryHandler(gift_subscription_confirm_callback, pattern='^admin_gift_subscription_confirm_\\d+_\\d+$'))
+    application.add_handler(CallbackQueryHandler(gift_subscription_confirm_callback, pattern=r'^admin_gift_subscription_confirm_(?:[0-9a-f]{32}|[0-9]+_[0-9]+)$'))
     application.add_handler(CallbackQueryHandler(remove_subscription_callback, pattern='^admin_remove_subscription_\\d+$'))
     application.add_handler(CallbackQueryHandler(remove_subscription_confirm_callback, pattern='^admin_remove_subscription_confirm_\\d+$'))
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & (~filters.COMMAND), gift_subscription_message), group=996) 

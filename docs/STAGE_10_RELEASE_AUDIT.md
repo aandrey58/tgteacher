@@ -72,3 +72,15 @@ New orders use a server-side 30-minute quote and UUID, revalidate the current ta
 Operator-only CLI lists active/refunded orders, verifies existing provider IDs with authenticated lookup, supports preview and explicit apply for matching durable orders, and inspects legacy records read-only. No charge/refund creation or automatic legacy credit. Refund amount is the provider's verified cumulative RUB total, recorded monotonically with observation history. A refund observed before grant blocks automatic credit; after credit, access is unchanged pending operator review (cannot subtract blindly from mixed purchases/gifts). Partial and full returns require explicit commercial policy; no invented pro-rata rules. Source: https://yookassa.ru/developers/payment-acceptance/after-the-payment/refunds. Legacy gifts now route through the web transaction service, with UUID confirmation and rejection of obsolete callbacks.
 
 **New release gate: Telegram digital goods must use Stars.** Official policy: https://core.telegram.org/bots/payments-stars. New in-bot RUB purchases and external checkout links are disabled regardless of the YooKassa creation flag; old orders remain checkable. The service-level YooKassa adapter is retained for isolated testing and a separately designed independent checkout, not a Telegram purchase bypass. Stars invoice/pre-checkout/successful-payment/refund flows, XTR tariff configuration and operator policy remain to be implemented before in-bot paid VIP is enabled. No actual provider calls or refunds performed during development.
+
+Operator commands (run only on the intended bot container; no provider charge/refund creation):
+
+```sh
+docker compose exec bot python -m scripts.reconcile_payments list
+docker compose exec bot python -m scripts.reconcile_payments legacy PROVIDER_UUID
+docker compose exec bot python -m scripts.reconcile_payments reconcile USER_ID ORDER_UUID PROVIDER_UUID
+# Only after inspecting the preview and matching the merchant's records:
+# docker compose exec bot python -m scripts.reconcile_payments reconcile USER_ID ORDER_UUID PROVIDER_UUID --apply
+```
+
+An unbound order with no provable provider ID remains blocked for manual merchant resolution; no guessed cancellation or re-creation. Refund observations are not a refund command, nor automatic entitlement revocation. These are manual reconciliation facilities, not automatic provider polling or a completed refund business policy.

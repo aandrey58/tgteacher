@@ -3,6 +3,9 @@
 !requirements.txt
 !bot/
 !bot/main.py
+!bot/scripts/
+!bot/scripts/__init__.py
+!bot/scripts/reconcile_payments.py
 !bot/tgteacher_bot/
 !bot/tgteacher_bot/**
 **/__pycache__

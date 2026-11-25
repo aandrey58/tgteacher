@@ -269,6 +269,13 @@ class PaymentDatabaseTests(unittest.IsolatedAsyncioTestCase):
         query=SimpleNamespace(data="admin_gift_subscription_confirm_"+op,answer=AsyncMock(),edit_message_text=AsyncMock())
         context=SimpleNamespace(user_data={"gift_subscription_operation":op,"gift_subscription_user_id":11,"gift_subscription_days":30})
         update=SimpleNamespace(callback_query=query)
+        from telegram.ext import CallbackQueryHandler
+        handlers=[]
+        sub_gift.register_sub_gift_handlers(SimpleNamespace(add_handler=lambda handler,group=0:handlers.append(handler)))
+        matched=[h for h in handlers if isinstance(h,CallbackQueryHandler) and h.pattern.match(query.data)]
+        self.assertEqual(len(matched),1)
+        self.assertIs(matched[0].callback,sub_gift.gift_subscription_confirm_callback)
+        self.assertLessEqual(len(query.data.encode()),64)
         await sub_gift.gift_subscription_confirm_callback(update,context)
         first=await self.snapshot()
         self.assertTrue(first["is_subscribed"])
