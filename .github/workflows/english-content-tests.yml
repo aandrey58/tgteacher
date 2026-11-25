@@ -84,6 +84,8 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8080/ | grep 'TGTeacher Admin'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/groups)" = 401
+      - name: Seed synthetic screenshot data
+        run: docker compose --profile web exec -T admin python - < tests/seed_web_demo.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
