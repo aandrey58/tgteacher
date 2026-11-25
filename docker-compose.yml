@@ -81,10 +81,12 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-tgteacher}
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
+      TGTEACHER_ADMINS_PATH: /app/runtime_cache/admins.txt
     ports:
       - "127.0.0.1:${ADMIN_HOST_PORT:-8080}:8080"
     volumes:
       - ./families:/app/families:ro
+      - ./runtime_cache:/app/runtime_cache:ro
 
 volumes:
   postgres_data:
