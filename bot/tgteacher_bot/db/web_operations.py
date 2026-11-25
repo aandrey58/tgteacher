@@ -43,6 +43,9 @@ async def init_operations(c):
             status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','queued','answered','closed')),
             answer TEXT
         );
+        ALTER TABLE web_support ADD COLUMN IF NOT EXISTS legacy_key TEXT;
+        ALTER TABLE web_support ADD COLUMN IF NOT EXISTS legacy_asked_at TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS web_support_legacy_key_idx ON web_support(legacy_key);
         CREATE TABLE IF NOT EXISTS web_message_attachments (
             asset_id TEXT PRIMARY KEY, filename TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('video','document')),
             content BYTEA NOT NULL CHECK(octet_length(content) BETWEEN 1 AND 16777216)
@@ -157,12 +160,63 @@ async def create_question(user_id, question):
         return await c.fetchval("INSERT INTO web_support(user_id,question) VALUES($1,$2) RETURNING id",user_id,question.strip())
 
 
+def parse_legacy_help(raw, group_id):
+    """Only recover information actually present in the bounded JSON index."""
+    import json
+    if type(group_id) is not int or group_id >= 0 or not 0 < len(raw) <= 32*1024*1024:
+        raise ValueError("Invalid legacy help index")
+    data = json.loads(raw)
+    if not isinstance(data, dict) or len(data) > 5000:
+        raise ValueError("Invalid legacy help index")
+    rows = []
+    for key, value in data.items():
+        if not key.isascii() or not key.isdecimal() or len(key)>18 or int(key)<1 or not isinstance(value, dict):
+            raise ValueError("Invalid legacy help entry")
+        uid, question, asked = value.get("user_id"), value.get("question_text"), value.get("asked_at")
+        if type(uid) is not int or not 0<uid<2**53 or not isinstance(question,str) or not 1<=len(question.strip())<=4096:
+            raise ValueError("Invalid legacy help entry")
+        if asked is not None:
+            if not isinstance(asked,str):
+                raise ValueError("Invalid legacy help date")
+            datetime.strptime(asked,"%d.%m.%Y %H:%M:%S")
+        rows.append((f"{group_id}:{int(key)}",uid,question.strip(),asked))
+    if len({row[0] for row in rows}) != len(rows):
+        raise ValueError("Duplicate legacy help key")
+    return rows
+
+
+async def import_legacy_help(raw, group_id, apply=False):
+    if type(apply) is not bool:
+        raise ValueError("Invalid import mode")
+    rows = parse_legacy_help(raw,group_id)
+    pool = await get_pool()
+    result = {"total":len(rows),"eligible":0,"existing":0,"missing_users":0,"inserted":0}
+    async with pool.acquire() as c:
+        async with c.transaction():
+            await c.execute("SELECT pg_advisory_xact_lock(847231,95)")
+            for key,uid,question,asked in rows:
+                if await c.fetchval("SELECT 1 FROM web_support WHERE legacy_key=$1",key):
+                    result["existing"]+=1
+                    continue
+                if not await c.fetchval("SELECT 1 FROM users WHERE user_id=$1",uid):
+                    result["missing_users"]+=1
+                    continue
+                result["eligible"]+=1
+                if apply:
+                    # Unknown historical reply status: archive only, never queue a send.
+                    inserted=await c.fetchval("""INSERT INTO web_support(user_id,question,status,legacy_key,legacy_asked_at)
+                        SELECT user_id,$2,'closed',$3,$4 FROM users WHERE user_id=$1
+                        ON CONFLICT(legacy_key) DO NOTHING RETURNING id""",uid,question,key,asked)
+                    result["inserted"]+=int(inserted is not None)
+    return result
+
+
 async def support_list(offset=0):
     if type(offset) is not int or not 0<=offset<=100000:
         raise ValueError("Invalid offset")
     pool=await get_pool()
     async with pool.acquire() as c:
-        rows=await c.fetch("""SELECT s.id,s.user_id::text AS user_id,s.question,s.answer,s.status,s.created_at::text AS created_at,u.first_name,u.username
+        rows=await c.fetch("""SELECT s.id,s.user_id::text AS user_id,s.question,s.answer,s.status,s.created_at::text AS created_at,s.legacy_key,s.legacy_asked_at,u.first_name,u.username
             FROM web_support s JOIN users u USING(user_id) ORDER BY (s.status='open') DESC,s.id DESC LIMIT 51 OFFSET $1""",offset)
     return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50}
 

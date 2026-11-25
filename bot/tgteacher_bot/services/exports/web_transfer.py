@@ -54,11 +54,33 @@ async def upload_asset(kind,data):
     return {k:v for k,v in asset.items() if k!="data"}
 
 
+class MissingArchiveMedia(ValueError):
+    pass
+
+
 def parse_archive(raw):
+    """Prefer standard ZIP names; try legacy Windows encodings only on missing media."""
+    try:
+        return _parse_archive(raw)
+    except MissingArchiveMedia as original:
+        recovered = []
+        for encoding in ("cp866", "cp1251"):
+            try:
+                recovered.append(_parse_archive(raw, encoding))
+            except ValueError:
+                continue
+        if not recovered:
+            raise original
+        if any(candidate != recovered[0] for candidate in recovered[1:]):
+            raise ValueError("Ambiguous legacy ZIP filename encoding")
+        return recovered[0]
+
+
+def _parse_archive(raw, encoding=None):
     if not 0<len(raw)<=MAX_ARCHIVE:
         raise ValueError("ZIP size limit")
     try:
-        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        with zipfile.ZipFile(io.BytesIO(raw), metadata_encoding=encoding) as z:
             files={}
             total=0
             entries=z.infolist()
@@ -66,7 +88,7 @@ def parse_archive(raw):
                 raise ValueError("Too many archive entries")
             for info in entries:
                 path=PurePosixPath(info.filename)
-                if (path.is_absolute() or ".." in path.parts or "\\" in info.filename or ":" in info.filename
+                if ("\x00" in info.orig_filename or path.is_absolute() or ".." in path.parts or "\\" in info.filename or ":" in info.filename
                         or stat.S_ISLNK(info.external_attr>>16) or info.flag_bits & 1):
                     raise ValueError("Unsafe or encrypted archive")
                 if info.is_dir():
@@ -92,7 +114,7 @@ def parse_archive(raw):
                     name=task[kind]
                     item=files.get(name.casefold())
                     if not item or item[0].parent!=txt[0][0].parent:
-                        raise ValueError("Missing media in archive")
+                        raise MissingArchiveMedia("Missing media in archive")
                     key=(kind,name.casefold())
                     if key not in assets:
                         assets[key]=prepare_asset(kind,item[1])

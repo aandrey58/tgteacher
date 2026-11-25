@@ -167,6 +167,25 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertEqual(action("subscription",{"user_ids":[11],"revoke":True},True).status_code,200)
                     self.assertEqual(action("delete_learner",{"user_id":22},True).status_code,200)
                     self.assertEqual(action("support",{}).json()["items"],[])
+                    # Legacy help import is dry-run by default, idempotent and never queues delivery.
+                    import json
+                    legacy=json.dumps({"123":{"user_id":11,"question_text":"Archived","asked_at":"25.11.2026 12:00:00"},"124":{"user_id":99999,"question_text":"Missing"}}).encode()
+                    self.assertEqual(client.portal.call(ops.import_legacy_help,legacy,-100)["inserted"],0)
+                    self.assertEqual(client.portal.call(ops.import_legacy_help,legacy,-100,True)["inserted"],1)
+                    self.assertEqual(client.portal.call(ops.import_legacy_help,legacy,-100,True)["existing"],1)
+                    self.assertEqual(action("support",{}).json()["items"][0]["status"],"closed")
+                    self.assertFalse(client.portal.call(ops.deliver_one,bot))
+                    # Support reply with an attachment uses the same explicit delivery queue.
+                    reply_file=post_file("upload_attachment?kind=document&filename=answer.txt",b"answer")
+                    self.assertEqual(reply_file.status_code,200)
+                    question=client.portal.call(ops.create_question,11,"Can I get the file?")
+                    reply_id=str(uuid.uuid4())
+                    self.assertEqual(action("create_campaign",{"campaign_id":reply_id,"target":"support","question_id":question,"text":"","attachment_id":reply_file.json()["asset_id"]},True).status_code,200)
+                    self.assertEqual(action("confirm_campaign",{"campaign_id":reply_id,"expected_count":1},True).status_code,200)
+                    bot.send_document=AsyncMock()
+                    self.assertTrue(client.portal.call(ops.deliver_one,bot))
+                    bot.send_document.assert_awaited_once()
+                    self.assertEqual(action("support",{}).json()["items"][0]["status"],"answered")
                     # Uploaded message documents and unknown-send handling use a mock bot.
                     attachment=post_file("upload_attachment?kind=document&filename=guide.txt",b"study guide")
                     self.assertEqual(attachment.status_code,200,attachment.text)
@@ -219,6 +238,24 @@ class TransferTests(unittest.TestCase):
                     z.writestr(name,data)
             with self.assertRaises(ValueError):
                 transfer.parse_archive(out.getvalue())
+
+    def test_legacy_windows_zip_names(self):
+        for encoding in ("cp866","cp1251"):
+            out=io.BytesIO()
+            with zipfile.ZipFile(out,"w") as z:
+                z.writestr("lesson/lesson.txt",'#FAMILY "Portable"\n#WORD ticket\n#TRANSLATION билет\n#STAGE5\n#TASK\n#IMAGE фото.png\n#ANSWER ticket\n')
+                z.writestr("lesson/xxxx.png",fixture())
+            raw=out.getvalue().replace(b"xxxx.png","фото.png".encode(encoding))
+            self.assertEqual(len(transfer.parse_archive(raw)[1]),1)
+
+    def test_legacy_help_validation(self):
+        import json
+        row={"user_id":11,"question_text":"Question","asked_at":"25.11.2026 12:00:00"}
+        raw=json.dumps({"1":row}).encode()
+        self.assertEqual(ops.parse_legacy_help(raw,-100)[0],("-100:1",11,"Question",row["asked_at"]))
+        for invalid in (b"[]", b'{"1":{}}', b'{"0":{}}'):
+            with self.assertRaises(ValueError):
+                ops.parse_legacy_help(invalid,-100)
 
     def test_invalid_media_rejected(self):
         for kind in ("image","audio"):
