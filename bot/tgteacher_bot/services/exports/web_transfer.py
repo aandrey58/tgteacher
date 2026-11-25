@@ -23,7 +23,11 @@ MAX_ENTRIES=501
 
 def prepare_asset(kind,data):
     if kind=="image":
-        data,w,h=normalize_image(data)
+        from PIL import Image
+        try:
+            data,w,h=normalize_image(data)
+        except (OSError,Image.DecompressionBombError,Image.DecompressionBombWarning) as exc:
+            raise ValueError('Invalid image') from exc
     elif kind=="audio":
         data=check_mp3(data)
         w=h=None
