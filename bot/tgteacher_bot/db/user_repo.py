@@ -274,6 +274,8 @@ async def init_db_pg():
             await init_drafts(conn)
             from tgteacher_bot.db.content_schema import migrate_content
             await migrate_content(conn)
+            from tgteacher_bot.db.web_operations import init_operations
+            await init_operations(conn)
 
 @track_db_errors
 async def set_task_done_pg(user_id: int, family_idx: int, stage_num: int, task_idx: int):
