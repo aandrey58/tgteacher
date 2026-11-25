@@ -35,12 +35,17 @@ async def init_operations(c):
             status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','queued','answered','closed')),
             answer TEXT
         );
+        CREATE TABLE IF NOT EXISTS web_message_attachments (
+            asset_id TEXT PRIMARY KEY, filename TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('video','document')),
+            content BYTEA NOT NULL CHECK(octet_length(content) BETWEEN 1 AND 16777216)
+        );
         CREATE TABLE IF NOT EXISTS web_campaigns (
             id UUID PRIMARY KEY, target TEXT NOT NULL, body TEXT NOT NULL,
             photo_id TEXT REFERENCES image_assets(asset_id), support_id BIGINT REFERENCES web_support(id) ON DELETE CASCADE,
             status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','queued','cancelled')),
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
+        ALTER TABLE web_campaigns ADD COLUMN IF NOT EXISTS attachment_id TEXT REFERENCES web_message_attachments(asset_id);
         CREATE TABLE IF NOT EXISTS web_deliveries (
             campaign_id UUID NOT NULL REFERENCES web_campaigns(id) ON DELETE CASCADE,
             user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -121,8 +126,12 @@ async def set_tariff(months, amount=None, remove=False):
         if remove:
             await c.execute("DELETE FROM payment_options WHERE months=$1",months)
         else:
-            await c.execute("""INSERT INTO payment_options(months,amount) VALUES($1,$2)
-                ON CONFLICT(months) DO UPDATE SET amount=excluded.amount""",months,amount)
+            async with c.transaction():
+                await c.execute("SELECT pg_advisory_xact_lock(847231,94)")
+                if not await c.fetchval("SELECT 1 FROM payment_options WHERE months=$1",months) and await c.fetchval("SELECT count(*) FROM payment_options")>=4:
+                    raise ValueError("At most four tariffs")
+                await c.execute("""INSERT INTO payment_options(months,amount) VALUES($1,$2)
+                    ON CONFLICT(months) DO UPDATE SET amount=excluded.amount""",months,amount)
     return {"ok":True}
 
 
@@ -159,9 +168,11 @@ async def close_question(question_id):
     return {"ok":True}
 
 
-async def create_campaign(campaign_id, target, text, user_ids=None, photo_id=None, question_id=None):
+async def create_campaign(campaign_id, target, text, user_ids=None, photo_id=None, question_id=None, attachment_id=None):
     ident=uuid.UUID(campaign_id)
-    if not isinstance(text,str) or not 1<=len(text.strip())<=(1024 if photo_id else 4000):
+    if photo_id and attachment_id:
+        raise ValueError("Choose one attachment")
+    if not isinstance(text,str) or len(text.strip())>(1024 if photo_id or attachment_id else 4000) or (not text.strip() and not (photo_id or attachment_id)):
         raise ValueError("Invalid message length")
     if target not in (*TARGETS,"selected","support"):
         raise ValueError("Invalid recipient target")
@@ -178,12 +189,14 @@ async def create_campaign(campaign_id, target, text, user_ids=None, photo_id=Non
                 raise ValueError("Campaign ID already used")
             if photo_id and not await c.fetchval("SELECT 1 FROM image_assets WHERE asset_id=$1",photo_id):
                 raise ValueError("Unknown image")
+            if attachment_id and not await c.fetchval("SELECT 1 FROM web_message_attachments WHERE asset_id=$1",attachment_id):
+                raise ValueError("Unknown attachment")
             if target=="support":
                 q=await c.fetchrow("SELECT user_id,status FROM web_support WHERE id=$1 FOR UPDATE",question_id)
                 if not q or q["status"]!="open":
                     raise ValueError("Question not open")
                 selected=[q["user_id"]]
-            await c.execute("INSERT INTO web_campaigns(id,target,body,photo_id,support_id) VALUES($1,$2,$3,$4,$5)",ident,target,text.strip(),photo_id,question_id)
+            await c.execute("INSERT INTO web_campaigns(id,target,body,photo_id,support_id,attachment_id) VALUES($1,$2,$3,$4,$5,$6)",ident,target,text.strip(),photo_id,question_id,attachment_id)
             if target in TARGETS:
                 from tgteacher_bot.handlers.admin.admin_list import get_admin_ids
                 excluded=[int(i) for i in get_admin_ids() if str(i).isdigit()]
@@ -239,7 +252,7 @@ async def campaigns(offset=0):
         raise ValueError("Invalid offset")
     pool=await get_pool()
     async with pool.acquire() as c:
-        rows=await c.fetch("""SELECT w.id::text AS id,w.target,w.body,w.photo_id,w.status,w.created_at::text AS created_at,
+        rows=await c.fetch("""SELECT w.id::text AS id,w.target,w.body,w.photo_id,w.attachment_id,w.status,w.created_at::text AS created_at,
             count(d.user_id) AS recipients,count(*) FILTER(WHERE d.status='sent') AS sent,
             count(*) FILTER(WHERE d.status='pending') AS pending,count(*) FILTER(WHERE d.status='sending') AS sending,
             count(*) FILTER(WHERE d.status='failed') AS failed,count(*) FILTER(WHERE d.status='uncertain') AS uncertain,
@@ -255,7 +268,7 @@ async def deliver_one(bot):
         async with c.transaction():
             # A process that died after claiming a message might have sent it.
             await c.execute("UPDATE web_deliveries SET status='uncertain' WHERE status='sending' AND changed_at<now()-interval '10 minutes'")
-            row=await c.fetchrow("""SELECT d.campaign_id,d.user_id,w.body,w.photo_id,w.support_id
+            row=await c.fetchrow("""SELECT d.campaign_id,d.user_id,w.body,w.photo_id,w.support_id,w.attachment_id
                 FROM web_deliveries d JOIN web_campaigns w ON w.id=d.campaign_id
                 WHERE d.status='pending' AND w.status='queued'
                 ORDER BY d.changed_at,d.campaign_id,d.user_id LIMIT 1 FOR UPDATE OF d,w SKIP LOCKED""")
@@ -263,10 +276,18 @@ async def deliver_one(bot):
                 return False
             await c.execute("UPDATE web_deliveries SET status='sending',changed_at=now() WHERE campaign_id=$1 AND user_id=$2",row["campaign_id"],row["user_id"])
             photo=await c.fetchval("SELECT jpeg FROM image_assets WHERE asset_id=$1",row["photo_id"]) if row["photo_id"] else None
+            attachment=await c.fetchrow("SELECT filename,kind,content FROM web_message_attachments WHERE asset_id=$1",row["attachment_id"]) if row["attachment_id"] else None
     status="uncertain"
     try:
         if photo:
             await asyncio.wait_for(bot.send_photo(chat_id=row["user_id"],photo=io.BytesIO(photo),caption=row["body"]),40)
+        elif attachment:
+            from telegram import InputFile
+            file=InputFile(attachment["content"],filename=attachment["filename"])
+            if attachment["kind"]=="video":
+                await asyncio.wait_for(bot.send_video(chat_id=row["user_id"],video=file,caption=row["body"]),40)
+            else:
+                await asyncio.wait_for(bot.send_document(chat_id=row["user_id"],document=file,caption=row["body"]),40)
         else:
             await asyncio.wait_for(bot.send_message(chat_id=row["user_id"],text=row["body"]),40)
         status="sent"
@@ -428,3 +449,25 @@ async def learner_answers(uid, family_id, limit=50, offset=0):
             FROM active_user_task_progress WHERE user_id=$1 AND family_idx=$2
             ORDER BY stage_num,task_idx LIMIT $3 OFFSET $4""",uid,family_id,limit+1,offset)
     return {"items":[dict(r) for r in rows[:limit]],"next":len(rows)>limit}
+
+
+async def upload_message_attachment(filename,kind,data):
+    import hashlib
+    import re
+    from pathlib import Path
+    if (not isinstance(filename,str) or not 1<=len(filename)<=120 or Path(filename).name!=filename
+            or any(ord(c)<32 for c in filename) or "\\" in filename or not 1<=len(data)<=16*1024*1024
+            or kind not in ("video","document")):
+        raise ValueError("Invalid attachment")
+    suffix=Path(filename).suffix.lower()
+    if kind=="video":
+        if suffix!=".mp4" or data[4:8]!=b"ftyp":
+            raise ValueError("MP4 required")
+    elif suffix not in (".pdf",".txt",".zip",".docx",".xlsx",".pptx"):
+        raise ValueError("Unsupported document type")
+    # Documents are opaque attachments, never executed, parsed or displayed inline.
+    ident=hashlib.sha256(kind.encode()+b"\0"+filename.encode()+b"\0"+data).hexdigest()
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        await c.execute("INSERT INTO web_message_attachments VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",ident,filename,kind,data)
+    return {"asset_id":ident,"filename":filename,"kind":kind}
