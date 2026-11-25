@@ -115,6 +115,16 @@ test('authenticated admin',async({page,browserName},testInfo)=>{
   }
   await page.getByRole('button',{name:'Закрыть',exact:true}).click();
   if(operations){
+    await page.getByRole('checkbox',{name:'Выбрать '+groupName,exact:true}).check();
+    page.once('dialog',d=>d.accept());
+    await page.getByRole('button',{name:'Архивировать выбранные'}).click();
+    await expect(page.getByRole('cell').filter({hasText:groupName})).toHaveCount(0);
+    await page.getByLabel('Фильтр статуса').selectOption('Archived');
+    await page.getByRole('checkbox',{name:'Выбрать '+groupName,exact:true}).check();
+    page.once('dialog',d=>d.accept());
+    await page.getByRole('button',{name:'Восстановить выбранные'}).click();
+    await page.getByLabel('Фильтр статуса').selectOption('Published');
+    await expect(page.getByRole('cell').filter({hasText:groupName}).first()).toBeVisible();
     await page.getByText('Импорт и шаблон урока',{exact:true}).click();
     await page.getByLabel('ZIP-архив урока').setInputFiles(await downloaded.path());
     page.once('dialog',d=>d.accept());
@@ -131,6 +141,10 @@ test('authenticated admin',async({page,browserName},testInfo)=>{
     const dialog=page.getByRole('dialog',{name:'Рассылки и обращения'});
     await expect(dialog.getByRole('heading',{name:'Новое сообщение'})).toBeVisible();
     await dialog.getByLabel('Текст сообщения').fill('Тест CI '+viewport.width);
+    await dialog.getByText('Прикрепить документ или видео',{exact:true}).click();
+    await dialog.getByLabel('Файл',{exact:true}).setInputFiles({name:'ci-guide.txt',mimeType:'text/plain',buffer:Buffer.from('CI fixture')});
+    await dialog.getByRole('button',{name:'Загрузить вложение'}).click();
+    await expect(dialog.getByText('ci-guide.txt',{exact:false})).toBeVisible();
     await dialog.getByRole('button',{name:'Подготовить рассылку'}).click();
     await expect(dialog.getByRole('heading',{name:'Подтверждение рассылки'})).toBeVisible();
     await page.screenshot({path:testInfo.outputPath('campaign-preview.png'),fullPage:true});
