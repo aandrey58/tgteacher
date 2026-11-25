@@ -140,6 +140,51 @@ class CutoverTests(unittest.IsolatedAsyncioTestCase):
             await support.help_group_reply_handler(update,context)
         context.bot.send_message.assert_not_awaited()
 
+    async def test_legacy_help_ack_only_after_delivery_and_index(self):
+        from tgteacher_bot.handlers.user import help as support
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"support.json"
+            calls=[]
+            async def deliver(**kwargs):
+                calls.append("deliver")
+                self.assertIn("&lt;question&gt;",kwargs["text"])
+                return SimpleNamespace(message_id=77)
+            async def ack(*args,**kwargs):
+                self.assertTrue(path.exists())
+                import json
+                self.assertEqual(json.loads(path.read_text())["77"]["user_id"],11)
+                calls.append("ack")
+            message=SimpleNamespace(text="<question>",message_id=1,delete=AsyncMock(),reply_text=AsyncMock(),
+                chat=SimpleNamespace(send_message=AsyncMock(side_effect=ack)))
+            update=SimpleNamespace(message=message,effective_user=SimpleNamespace(id=11,username="student",first_name="<Name>"),
+                effective_chat=SimpleNamespace(id=11,type="private"))
+            ctx=SimpleNamespace(user_data={},application=SimpleNamespace(bot_data={}),
+                bot=SimpleNamespace(send_message=AsyncMock(side_effect=deliver),delete_message=AsyncMock()))
+            with patch.object(support,"HELP_INDEX_FILE_PATH",str(path)),patch.object(support,"mark_user_active_if_needed",new=AsyncMock()),patch.dict(os.environ,{"TGTEACHER_WEB_SUPPORT":"0","HELP_QUESTIONS_GROUP_ID":"-100123"}):
+                for failure in ("config","telegram","disk"):
+                    ctx.user_data[support.AWAITING_HELP_QUESTION]=True
+                    ctx.user_data[support.HELP_PROMPT_MESSAGE_ID]=8
+                    with patch.dict(os.environ,{"HELP_QUESTIONS_GROUP_ID":"" if failure=="config" else "-100123"}),patch.object(ctx.bot.send_message,"side_effect",RuntimeError("send failed") if failure=="telegram" else deliver),patch.object(support,"save_help_index_to_disk",return_value=False) if failure=="disk" else patch.object(support,"save_help_index_to_disk",wraps=support.save_help_index_to_disk):
+                        with self.assertRaises(ApplicationHandlerStop):
+                            await support.help_user_text_handler(update,ctx)
+                    self.assertTrue(ctx.user_data[support.AWAITING_HELP_QUESTION])
+                    self.assertEqual(ctx.user_data[support.HELP_PROMPT_MESSAGE_ID],8)
+                    message.delete.assert_not_awaited()
+                    message.chat.send_message.assert_not_awaited()
+                self.assertEqual(message.reply_text.await_count,3)
+                with self.assertRaises(ApplicationHandlerStop):
+                    await support.help_user_text_handler(update,ctx)
+                self.assertEqual(calls[-2:],["deliver","ack"])
+                self.assertNotIn(support.AWAITING_HELP_QUESTION,ctx.user_data)
+                message.delete.assert_awaited_once()
+                ctx.bot.delete_message.assert_awaited_once_with(11,8)
+                # A failed replace never corrupts the last durable index.
+                old=path.read_bytes()
+                with patch.object(support.os,"replace",side_effect=OSError("disk failure")):
+                    self.assertFalse(support.save_help_index_to_disk(ctx))
+                self.assertEqual(path.read_bytes(),old)
+                self.assertEqual(list(Path(tmp).iterdir()),[path])
+
 
 class PortableMediaTests(unittest.TestCase):
     def test_generated_zip_reimport_rewrites_reserved_names(self):

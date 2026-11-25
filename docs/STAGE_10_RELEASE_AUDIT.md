@@ -88,3 +88,14 @@ An unbound order with no provable provider ID remains blocked for manual merchan
 ### 10.2a — Stars implementation
 
 Separate XTR tariffs and order/charge/refund ledger; 30-minute quote, private invoice, exact pre-checkout identity/amount/currency, one checkout per invoice, transactional idempotent VIP grant after successful_payment. Refund events record evidence, not automatic subtraction from mixed access. Previously authorized payments are processed even if sales are disabled. One-off 30 days per month, not recurring. No default invented price. Owner-only web tariff management and currency-separated payment export/history. TGTEACHER_STARS_ENABLED defaults to 0. Operator reconciliation for missed Telegram events, refund initiation and independent YooKassa checkout remain open. CI confirmation pending.
+
+### 10.2a / 10.2b — operator visibility and SUP-01
+
+Предыдущая Stars-регрессия: 117/117, GHA 45682996007. Добавлен read-only список локальных XTR-заказов с фильтрацией и пагинацией:
+```sh
+docker compose exec bot python -m scripts.reconcile_payments stars-list
+docker compose exec bot python -m scripts.reconcile_payments stars-list --state all --limit 100 --offset 0
+```
+По умолчанию показываются authorized: это кандидаты для проверки, не доказательство оплаты. Команда не обращается к Telegram, не начисляет VIP и не инициирует возврат. Полноценная сверка пропущенных событий с Telegram и политика возвратов остаются блокерами.
+
+SUP-01: legacy поддержка сначала доставляет вопрос в группу и атомарно сохраняет индекс, только затем удаляет сообщение и подтверждает получение. Ошибки конфигурации, отправки или записи оставляют исходный вопрос и флаг ожидания; учебные handlers не получают вопрос. Web-режим сохраняет прежний порядок. При неопределённом исходе Telegram или сбое записи после доставки повтор может создать дубликат; это не exactly-once. Тесты имитируют ошибки и проверяют сохранность индекса. Production не переключается.

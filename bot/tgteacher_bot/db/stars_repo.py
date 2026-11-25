@@ -130,3 +130,18 @@ async def observe_refund(uid,payload,currency,amount,charge_id):
             if row["state"] not in ("authorized","paid") or (row["charge_id"] and row["charge_id"]!=charge_id):
                 raise StarsConflict("Refund does not match order")
             return dict(await c.fetchrow("UPDATE stars_orders SET state='refunded',charge_id=$2,refunded_at=now() WHERE id=$1 RETURNING *",row["id"],charge_id))
+
+async def operator_orders(state="authorized",limit=100,offset=0):
+    """Read-only, bounded local ledger inspection; not provider reconciliation."""
+    if state not in ("prepared","authorized","paid","refunded","all"):
+        raise StarsConflict("Invalid order state")
+    if type(limit) is not int or not 1<=limit<=500 or type(offset) is not int or offset<0:
+        raise StarsConflict("Invalid pagination")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        return [dict(r) for r in await c.fetch("""
+            SELECT id,user_id,months,amount,state,created_at,authorized_at,paid_at,
+                   refunded_at,charge_id,result_subscription_until
+            FROM stars_orders WHERE ($1='all' OR state=$1)
+            ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3
+        """,state,limit,offset)]

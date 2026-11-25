@@ -140,3 +140,21 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.pool.acquire() as c:
             await c.execute("ALTER TABLE stars_orders DROP CONSTRAINT synthetic_fault")
         self.assertEqual((await repo.settle(11,p,"XTR",250,"charge-fault"))["state"],"paid")
+
+    async def test_operator_ledger_is_read_only_and_paginated(self):
+        before=await self.snapshot()
+        prepared=await repo.prepare(11,3,250)
+        authorized=await self.authorized()
+        paid=await self.authorized(22)
+        await repo.settle(22,paid,"XTR",250,"charge-operator")
+        rows=await repo.operator_orders()
+        self.assertEqual([r["id"] for r in rows],[repo.order_id(authorized)])
+        self.assertEqual((rows[0]["amount"],rows[0]["state"]),(250,"authorized"))
+        self.assertNotIn("checkout_id",rows[0])
+        rows=await repo.operator_orders("all")
+        self.assertEqual({r["id"] for r in rows},{repo.order_id(prepared),repo.order_id(authorized),repo.order_id(paid)})
+        self.assertEqual(await repo.operator_orders("all",1,1),rows[1:2])
+        for args in (("bad",),("all",501),("all",1,-1)):
+            with self.assertRaises(repo.StarsConflict):
+                await repo.operator_orders(*args)
+        self.assertEqual(await self.snapshot(),before)

@@ -5,6 +5,7 @@ from html import escape
 from datetime import datetime, timedelta
 import logging
 import json
+import tempfile
 from tgteacher_bot.db.user_repo import mark_user_active_if_needed
 from tgteacher_bot.core import paths
 
@@ -93,16 +94,29 @@ def load_help_index_from_disk(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.exception("HELP: failed to load index from disk: %s", e)
 
-def save_help_index_to_disk(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Сохраняет текущий индекс вопросов из bot_data в JSON-файл."""
+def save_help_index_to_disk(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Atomically replace the index; report failure to the caller."""
+    temporary = None
     try:
         index = context.application.bot_data.get(HELP_QUESTIONS_INDEX, {})
         serializable = {str(k): v for k, v in index.items()}
-        with open(HELP_INDEX_FILE_PATH, 'w', encoding='utf-8') as f:
+        directory = os.path.dirname(os.path.abspath(HELP_INDEX_FILE_PATH))
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, delete=False) as f:
+            temporary = f.name
             json.dump(serializable, f, ensure_ascii=False, indent=2)
-        logger.info("HELP: saved index to disk: path=%s size=%d", HELP_INDEX_FILE_PATH, len(index))
-    except Exception as e:
-        logger.exception("HELP: failed to save index to disk: %s", e)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, HELP_INDEX_FILE_PATH)
+        return True
+    except Exception:
+        logger.exception("HELP: failed to persist question index")
+        return False
+    finally:
+        if temporary and os.path.exists(temporary):
+            try:
+                os.unlink(temporary)
+            except OSError:
+                logger.warning("HELP: failed to remove temporary index")
 
 async def cleanup_help_index_job(context: ContextTypes.DEFAULT_TYPE):
     """Задача для планировщика: чистит индекс вопросов от записей старше 30 дней."""
@@ -221,104 +235,75 @@ async def help_user_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     if update.message.text.startswith('/'):
         logger.debug("HELP: skip command")
         return
-    await mark_user_active_if_needed(update.effective_user.id, context)
     user = update.effective_user
     chat_id = update.effective_chat.id if update.effective_chat else None
-    # Получаем текст
     text = (update.message.text or '').strip()
-    # In web support mode persist the question before acknowledging it.
     web_support = os.getenv("TGTEACHER_WEB_SUPPORT", "0") == "1"
-    if web_support:
-        from tgteacher_bot.db.web_operations import create_question
+    # No acknowledgement, deletion or state reset until the selected route succeeds.
+    try:
+        await mark_user_active_if_needed(user.id, context)
+        if web_support:
+            from tgteacher_bot.db.web_operations import create_question
+            await create_question(user.id, text)
+        else:
+            await _deliver_legacy_question(context, user, text)
+    except Exception:
+        logger.exception("HELP: question delivery/persistence failed")
         try:
-            await create_question(user.id,text)
-        except Exception:
-            await update.message.reply_text("Не удалось сохранить вопрос. Попробуйте ещё раз.")
+            await update.message.reply_text("Не удалось подтвердить отправку вопроса. Попробуйте ещё раз.")
+        finally:
             raise ApplicationHandlerStop
-    logger.info("HELP: question received user_id=%s", user.id)
-    # Чистим промпт, если он есть
+
+    context.user_data.pop(AWAITING_HELP_QUESTION, None)
     prompt_id = context.user_data.pop(HELP_PROMPT_MESSAGE_ID, None)
     if prompt_id:
         try:
             await context.bot.delete_message(chat_id, prompt_id)
-            logger.info("HELP: deleted prompt_message_id=%s", prompt_id)
-        except Exception as e:
-            logger.exception("HELP: failed to delete prompt prompt_message_id=%s: %s", prompt_id, e)
-    # Снимаем флаг ожидания
-    context.user_data.pop(AWAITING_HELP_QUESTION, None)
-
-    # Отвечаем пользователю о получении вопроса
-    ack_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton('✅ Ок', callback_data='help_ok_back')]
-    ])
+        except Exception:
+            logger.exception("HELP: failed to delete prompt")
     try:
         await update.message.delete()
-        logger.info("HELP: deleted user question message_id=%s", update.message.message_id)
-    except Exception as e:
-        logger.exception("HELP: failed to delete user question message: %s", e)
+    except Exception:
+        logger.exception("HELP: failed to delete user question")
     try:
-        await update.message.chat.send_message('✅ Ваш вопрос получен! Скоро Вам ответят!', reply_markup=ack_keyboard)
-        logger.info("HELP: sent ack to user_id=%s", user.id)
-    except Exception as e:
-        logger.exception("HELP: failed to send ack to user_id=%s: %s", user.id, e)
+        await update.message.chat.send_message(
+            '✅ Ваш вопрос получен! Скоро Вам ответят!',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('✅ Ок', callback_data='help_ok_back')]])
+        )
+    except Exception:
+        logger.exception("HELP: failed to send acknowledgement")
+    raise ApplicationHandlerStop
 
-    if web_support:
-        raise ApplicationHandlerStop
 
-    # Готовим отправку в группу
-    group_id_str = os.getenv(HELP_GROUP_ID_ENV)
-    logger.info("HELP: env %s raw=%r", HELP_GROUP_ID_ENV, group_id_str)
-    if not group_id_str:
-        logger.error("HELP: %s is not set in environment", HELP_GROUP_ID_ENV)
-        return
-    group_id_str_clean = group_id_str.strip().strip('"').strip("'")
-    logger.info("HELP: env %s cleaned=%r", HELP_GROUP_ID_ENV, group_id_str_clean)
-    try:
-        group_id = int(group_id_str_clean)
-    except Exception as e:
-        logger.exception("HELP: failed to convert %s to int: raw=%r cleaned=%r error=%s", HELP_GROUP_ID_ENV, group_id_str, group_id_str_clean, e)
-        return
-
+async def _deliver_legacy_question(context, user, text):
+    group_id = int(os.getenv(HELP_GROUP_ID_ENV, "").strip().strip('"').strip("'"))
+    if group_id >= 0:
+        raise ValueError("Support group must be a negative Telegram chat ID")
     username = f"@{user.username}" if user.username else '-'
     first_name = user.first_name or '-'
-    user_id = user.id
     asked_at = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
-
     group_text = (
         f"❓ <b>Новый вопрос</b>\n\n"
-        f"<b>Telegram ID:</b> <code>{user_id}</code>\n"
+        f"<b>Telegram ID:</b> <code>{user.id}</code>\n"
         f"<b>Имя:</b> {escape(first_name)}\n"
         f"<b>Username:</b> {escape(username)}\n"
         f"<b>Время вопроса:</b> {asked_at}\n\n"
         f"<b>Текст вопроса:</b>\n{escape(text)}"
     )
-
-    try:
-        logger.info("HELP: sending question to group_id=%s", group_id)
-        sent = await context.bot.send_message(
-            chat_id=group_id,
-            text=group_text,
-            parse_mode='HTML'
-        )
-        logger.info("HELP: sent to group ok: group_message_id=%s", sent.message_id)
-    except Exception as e:
-        logger.exception("HELP: failed to send message to group_id=%s: %s", group_id, e)
-        return
-
-    # Сохраняем связь message_id -> данные вопроса
-    # Подгружаем индекс с диска перед изменением, чтобы не потерять предыдущие записи
     load_help_index_from_disk(context)
+    if not context.application.bot_data.get(HELP_INDEX_LOADED_FLAG):
+        raise RuntimeError("Support index unavailable")
+    sent = await context.bot.send_message(chat_id=group_id, text=group_text, parse_mode='HTML')
     index = context.application.bot_data.setdefault(HELP_QUESTIONS_INDEX, {})
     index[sent.message_id] = {
-        'user_id': user_id,
-        'first_name': first_name,
-        'username': username,
-        'question_text': text,
-        'asked_at': asked_at,
+        'user_id': user.id, 'first_name': first_name, 'username': username,
+        'question_text': text, 'asked_at': asked_at,
     }
-    logger.info("HELP: index updated: key=%s size=%d", sent.message_id, len(index))
-    # Персистим на диск
-    save_help_index_to_disk(context)
+    if not save_help_index_to_disk(context):
+        # Keep the in-memory mapping for a possible reply; do not claim success.
+        # A retry after an ambiguous delivery can create a duplicate group question.
+        raise RuntimeError("Support group index not persisted")
+
 
 async def help_group_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Guard direct calls as well as registration; only the configured route may send.
@@ -420,7 +405,7 @@ def register_help_handlers(application):
     application.add_handler(CallbackQueryHandler(help_ok_back_callback, pattern='^help_ok_back$'))
     application.add_handler(CallbackQueryHandler(help_user_ok_delete_callback, pattern='^help_user_ok_delete$'))
 
-    # Текст от пользователя в режиме ожидания вопроса — ранний, НЕ блокируем другие хендлеры
+    # Вопрос поддержки перехватывается до обработчиков учебных ответов.
     application.add_handler(
         MessageHandler(
             filters.ChatType.PRIVATE & filters.TEXT & (~filters.COMMAND),
