@@ -33,7 +33,9 @@ Open http://127.0.0.1:8080. This is loopback-only. Remote access requires HTTPS 
 
 ## Phase 9.3 — mobile UX
 
-Polish small-screen ergonomics, touch targets, modal focus/scroll handling and accessibility across additional viewport widths and browsers.
+Russian UI remains the default. Compact layout uses drawer navigation through 900 px, two-column record cards on phones, three-column record cards on tablets, 44 px primary touch targets and 16 px form inputs. Native dialog top layer contains keyboard focus, blocks background scrolling, restores focus after closing, and preserves the existing confirmation for unsaved changes. Phone editor fills the viewport and keeps revision actions sticky; media gallery and version comparison remain responsive.
+
+Acceptance: complete authenticated workflow and all ten sections at 320, 375, 390, 430, 768 and 1536 CSS px in Chromium, plus 390 px WebKit touch emulation. Check navigation, focus restoration, rejected discard, translation persistence, all eight stage tabs, overflow, publication, version comparison, logout and browser errors. CI stores actual screenshots. WebKit emulation is not a physical iPhone test; native keyboard/safe-area behavior still needs staging on real devices.
 
 ## Phase 9.4 — feature parity before cutover
 
