@@ -85,6 +85,8 @@ async def init_operations(c):
         CREATE INDEX IF NOT EXISTS web_deliveries_user_idx ON web_deliveries(user_id);
         CREATE INDEX IF NOT EXISTS web_support_user_idx ON web_support(user_id);
     """)
+    from tgteacher_bot.db.payment_orders import init_orders
+    await init_orders(c)
 
 
 def ids(value):
@@ -135,7 +137,9 @@ async def subscription(user_ids, months=None, revoke=False, days=None, operation
                 if previous:
                     raise ValueError("Gift operation already applied")
                 rows=await c.fetch("""UPDATE users SET is_subscribed=true,
-                    subscription_until=CASE WHEN is_subscribed THEN greatest(now(),coalesce(subscription_until,now())) ELSE now() END+make_interval(days=>$2::int),
+                    subscription_until=CASE WHEN is_subscribed IS TRUE AND subscription_until IS NULL THEN NULL
+                        WHEN is_subscribed IS TRUE THEN greatest(now(),subscription_until)+make_interval(days=>$2::int)
+                        ELSE now()+make_interval(days=>$2::int) END,
                     subscription_count=coalesce(subscription_count,0)+1 WHERE user_id=ANY($1::bigint[]) RETURNING user_id,subscription_until""",selected,days)
                 for row in rows:
                     await c.execute("""INSERT INTO payments(payment_id,user_id,months,amount,status,processed,processed_at,result_subscription_until)

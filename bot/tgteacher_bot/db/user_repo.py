@@ -770,7 +770,8 @@ async def get_user_subscription_info_pg(user_id: int) -> Dict[str, Any]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT is_subscribed, subscription_count, subscription_until
+            SELECT (is_subscribed IS TRUE AND (subscription_until IS NULL OR subscription_until>now())) AS is_subscribed,
+                   subscription_count, subscription_until
             FROM users
             WHERE user_id = $1
         ''', user_id)
@@ -788,53 +789,18 @@ async def get_user_subscription_info_pg(user_id: int) -> Dict[str, Any]:
 
 @track_db_errors
 async def extend_user_subscription_pg(user_id: int, months: int):
-    """
-    Продлевает подписку пользователя на указанное количество месяцев
-    
-    Args:
-        user_id: ID пользователя в Telegram
-        months: Количество месяцев для продления
-    """
-    import datetime
-    
+    """Legacy helper: atomic update, same 30-day month rule as payment settlement."""
+    if type(months) is not int or not 1<=months<=60:
+        raise ValueError("Invalid subscription duration")
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Получаем текущую информацию о подписке
-        row = await conn.fetchrow('''
-            SELECT subscription_until, subscription_count
-            FROM users
-            WHERE user_id = $1
-        ''', user_id)
-        
-        if not row:
-            # Пользователь не существует, создаем запись
-            await conn.execute('''
-                INSERT INTO users (user_id, subscription_until, subscription_count, is_subscribed)
-                VALUES ($1, NOW() + INTERVAL '$2 months', $2, true)
-            ''', user_id, months)
-        else:
-            # Пользователь существует, продлеваем подписку
-            current_until = row['subscription_until']
-            current_count = row['subscription_count'] or 0
-            
-            # Если подписка истекла, начинаем с текущего момента
-            if not current_until or current_until < datetime.datetime.now(datetime.timezone.utc):
-                new_until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30 * months)
-            else:
-                # Если подписка активна, добавляем к текущей дате окончания
-                new_until = current_until + datetime.timedelta(days=30 * months)
-            
-            new_count = current_count + months
-            
-            await conn.execute('''
-                UPDATE users 
-                SET subscription_until = $2, 
-                    subscription_count = $3, 
-                    is_subscribed = true
-                WHERE user_id = $1
-            ''', user_id, new_until, new_count)
-        
-        logger.info(f"Подписка пользователя {user_id} продлена на {months} месяцев")
+        await conn.execute("""INSERT INTO users(user_id,subscription_until,subscription_count,is_subscribed)
+            VALUES($1,now()+make_interval(days=>$2::int),$3,true)
+            ON CONFLICT(user_id) DO UPDATE SET
+                subscription_until=CASE WHEN users.is_subscribed IS TRUE AND users.subscription_until IS NULL THEN NULL
+                    WHEN users.is_subscribed IS TRUE THEN greatest(now(),users.subscription_until)+make_interval(days=>$2::int)
+                    ELSE now()+make_interval(days=>$2::int) END,
+                subscription_count=coalesce(users.subscription_count,0)+$3,is_subscribed=true""",user_id,months*30,months)
 
 @track_db_errors
 async def get_all_users_progress_for_family_pg(family_id: int) -> List[Dict[str, Any]]:
