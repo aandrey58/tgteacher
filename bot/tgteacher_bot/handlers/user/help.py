@@ -206,7 +206,7 @@ async def help_user_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     if not context.user_data.get(AWAITING_HELP_QUESTION):
         # Логируем пропуски для отладки порядка хендлеров
         try:
-            logger.debug("HELP: skip text handler: awaiting flag is False; msg=%r", getattr(update.message, 'text', None))
+            logger.debug("HELP: skip text handler: awaiting flag is False")
         except Exception:
             pass
         return
@@ -218,14 +218,23 @@ async def help_user_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         logger.debug("HELP: skip: non-private chat type=%s", update.effective_chat.type)
         return
     if update.message.text.startswith('/'):
-        logger.debug("HELP: skip: command text=%r", update.message.text)
+        logger.debug("HELP: skip command")
         return
     await mark_user_active_if_needed(update.effective_user.id, context)
     user = update.effective_user
     chat_id = update.effective_chat.id if update.effective_chat else None
     # Получаем текст
     text = (update.message.text or '').strip()
-    logger.info("HELP: help_user_text_handler: user_id=%s chat_id=%s text_len=%s text_preview=%r", user.id, chat_id, len(text), text[:100])
+    # In web support mode persist the question before acknowledging it.
+    web_support = os.getenv("TGTEACHER_WEB_SUPPORT", "1") == "1"
+    if web_support:
+        from tgteacher_bot.db.web_operations import create_question
+        try:
+            await create_question(user.id,text)
+        except Exception:
+            await update.message.reply_text("Не удалось сохранить вопрос. Попробуйте ещё раз.")
+            return
+    logger.info("HELP: question received user_id=%s", user.id)
     # Чистим промпт, если он есть
     prompt_id = context.user_data.pop(HELP_PROMPT_MESSAGE_ID, None)
     if prompt_id:
@@ -251,6 +260,9 @@ async def help_user_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         logger.info("HELP: sent ack to user_id=%s", user.id)
     except Exception as e:
         logger.exception("HELP: failed to send ack to user_id=%s: %s", user.id, e)
+
+    if web_support:
+        return
 
     # Готовим отправку в группу
     group_id_str = os.getenv(HELP_GROUP_ID_ENV)
