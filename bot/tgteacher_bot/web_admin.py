@@ -240,7 +240,9 @@ async def page_data(page, offset, query, status="All", access="All", sort="updat
                 WHERE reserved_at>=day AT TIME ZONE 'UTC' AND reserved_at<(day+interval '1 day') AT TIME ZONE 'UTC'""")
             return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50,"metrics":{r["service"]:r["reserved"] for r in today},"limits":{"TTS":tts.daily_limit(),"Images":images.daily_limit()}}
         elif page=="settings":
-            rows=await c.fetch("SELECT action,status,actor,actor_role,created_at::text AS created_at FROM web_admin_audit ORDER BY id DESC LIMIT 51 OFFSET $1",offset)
+            rows=await c.fetch("""SELECT action,status,actor,actor_role,created_at::text AS created_at FROM web_admin_audit
+                WHERE ($2='' OR strpos(lower(concat_ws(' ',action,status,actor,actor_role)),lower($2))>0)
+                ORDER BY id DESC LIMIT 51 OFFSET $1""",offset,query)
             return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50,"metrics":{"MCP tools":45,"Web access":"Role-based","Database":"Connected"}}
         else:
             rows=None

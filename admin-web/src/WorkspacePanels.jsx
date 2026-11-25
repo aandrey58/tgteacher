@@ -16,7 +16,7 @@ const metrics={'MCP tools':[Database,'Инструменты MCP'],'Web access':
 };
 export function MetricCards({data,page}){
  if(!data)return null;
- return <div className="metrics">{Object.entries(data).map(([key,v],i)=>{const [Icon,label]=metrics[key]||[Database,key.replaceAll('_',' ').replace(/^./,x=>x.toUpperCase())];return <section key={key} className={'metric tint'+i%4}><div className="metric-label"><Icon size={21}/>{label}</div><strong>{page==='budgets'?'$'+(v/1e6).toFixed(4):typeof v==='number'?v.toLocaleString('ru-RU'):({'Single operator':'Один оператор','Role-based':'По ролям',Connected:'Подключена'}[v]??v)}</strong><small>{page==='budgets'?'Резерв, не счёт':'Данные базы'}</small></section>})}</div>
+ return <div className="metrics">{Object.entries(data).map(([key,v],i)=>{const [Icon,label]=metrics[key]||[Database,key.replaceAll('_',' ').replace(/^./,x=>x.toUpperCase())];return <section key={key} className={'metric tint'+i%4+(typeof v==='string'?' metric-text':'')}><div className="metric-label"><Icon size={21}/>{label}</div><strong>{page==='budgets'?'$'+(v/1e6).toFixed(4):typeof v==='number'?v.toLocaleString('ru-RU'):({'Single operator':'Один оператор','Role-based':'По ролям',Connected:'На связи'}[v]??v)}</strong><small>{page==='budgets'?'Резерв, не счёт':'Данные базы'}</small></section>})}</div>
 }
 export function PublishingActivity({items=[],open,go}){
  return <section className="panel publishing"><h2><Clock size={20}/>Последние публикации</h2>{items.length?<div className="timeline">{items.map(v=><button className="timeline-item" key={v.family_id+'-'+v.version} onClick={()=>open({id:v.family_id,name:v.name})}><span className="timeline-icon">{v.restored_from?<RotateCcw size={16}/>:<CheckCircle2 size={17}/>}</span><span><b>{v.name}</b><small>Версия {v.version}{v.restored_from?' · восстановлена v'+v.restored_from:' · опубликована'}</small><small>{formatDate(v.created_at)}</small></span><ArrowRight size={14}/></button>)}</div>:<p className="empty">Публикаций пока нет.</p>}<button className="link-button" onClick={()=>go('groups')}>Все группы <ArrowRight size={15}/></button></section>
@@ -28,4 +28,19 @@ export function WorkspaceRail({page,data,open,go}){
 }
 export function AssetGallery({rows,open}){
  return <div className="asset-gallery">{rows.map(r=><button className="asset-card" key={r.kind+r.asset_id} onClick={()=>open(r)}><div className={'asset-visual '+r.kind}>{r.kind==='image'?<img loading="lazy" alt="Сгенерированное изображение" src={'/api/asset?kind=image&id='+encodeURIComponent(r.asset_id)}/>:<><AudioLines size={48}/><PlayCircle size={25}/></>}</div><div className="asset-info"><b>{r.filename.slice(0,20)}…</b><span>{r.kind==='image'?r.width+' × '+r.height:'MP3'} · {Math.ceil(r.size_bytes/1024)} КБ</span><small>{formatDate(r.created_at)}</small><span className="asset-link">Открыть файл <ArrowRight size={14}/></span></div></button>)}</div>
+}
+
+export function ActivityChart({activity=[]}){
+ const counts=new Map(activity.map(a=>[a.day,a]));
+ const today=new Date();
+ // UTC calendar dates that intersect the rolling seven-day SQL window.
+ const days=Array.from({length:8},(_,i)=>{
+   const d=new Date(today);
+   d.setUTCDate(d.getUTCDate()-7+i);
+   const day=d.toISOString().slice(0,10);
+   return {day,attempts:counts.get(day)?.attempts||0,learners:counts.get(day)?.learners||0};
+ });
+ const total=days.reduce((sum,d)=>sum+d.attempts,0);
+ const max=Math.max(1,...days.map(d=>d.attempts));
+ return <><div className="activity-total"><strong>{total.toLocaleString('ru-RU')}</strong><small>ответов за 7 суток</small></div><div className="chart activity-chart" role="list" aria-label="Ответы по датам UTC">{days.map(a=><div className="bar-item" role="listitem" aria-label={a.day+': '+a.attempts+' ответов, '+a.learners+' учеников'} key={a.day}><b>{a.attempts}</b><div className={'bar'+(a.attempts?'':' zero-bar')} style={{height:a.attempts?Math.max(5,110*a.attempts/max):2}}/><small>{a.day.slice(8)}.{a.day.slice(5,7)}</small></div>)}</div><small className="chart-note">Крайние даты могут быть неполными.</small></>;
 }

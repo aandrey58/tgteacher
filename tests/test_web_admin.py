@@ -317,6 +317,10 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertEqual(login_as("support-agent",password).status_code,401)
                     self.assertEqual(login_as("support-agent","new-test-password-12345").status_code,200)
                     self.assertEqual(login_as("first-owner").json()["role"],"owner")
+                    self.assertEqual(client.get("/api/settings?q=not-existing-audit-123456").json()["items"],[])
+                    filtered_audit=client.get("/api/settings?q=login").json()["items"]
+                    self.assertTrue(filtered_audit)
+                    self.assertTrue(all("login" in r["action"].lower() for r in filtered_audit))
                     audit=client.get("/api/settings").json()["items"]
                     self.assertTrue(any(x["actor"]=="content-editor" and x["status"]=="denied" for x in audit))
                     self.assertTrue(any(x["actor"]=="support-agent" and x["action"]=="change_own_password" for x in audit))

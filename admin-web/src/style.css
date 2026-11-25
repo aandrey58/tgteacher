@@ -128,3 +128,44 @@ tr:nth-child(3n+3) .group-icon{background:#e3f9ee;color:#10925c}
 @media(max-width:900px){.upload-control{display:grid;grid-template-columns:minmax(0,1fr)}.download-link,.upload-control button{min-height:44px}.table-scroll td[data-field=selection]{grid-column:1/-1;flex-direction:row;align-items:center;justify-content:flex-end}.table-scroll td[data-field=selection] input{width:28px;height:28px}.operator-panel .actions button{flex:1;min-width:0}.operator-panel .panel{padding:12px}.bulk-bar .actions button{min-height:44px}.operator-panel .rail-row{flex-wrap:wrap}}
 
 .support-topbar{display:flex;justify-content:flex-end;gap:8px}.support-identity{margin-right:auto;min-width:0;display:grid;gap:3px;overflow-wrap:anywhere}.support-identity small{color:#66758b}.support-topbar button{flex:none;min-width:44px;min-height:44px}.profile b{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Stage 9.6 — screenshot review: one search, legible narrow layouts. */
+.topbar-context{display:flex;align-items:center;gap:6px;flex:1;min-width:0;margin-right:auto}
+.topbar-section{font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar-context .jump-search{flex:none;color:#52647e}
+.metric-text strong{font-size:22px;letter-spacing:-.35px;overflow-wrap:normal;word-break:normal}
+.activity-total{display:flex;align-items:baseline;gap:10px;margin-top:12px}
+.activity-total strong{font-size:28px;letter-spacing:-.6px}
+.activity-chart{height:160px;gap:5px;padding:6px 0 0;border-bottom:1px solid #dfe7f1}
+.activity-chart .bar-item{min-width:0;gap:5px}
+.activity-chart .bar-item b{font-size:12px;font-variant-numeric:tabular-nums;max-width:100%;overflow-wrap:anywhere}
+.activity-chart .bar-item small{font-size:10px;white-space:nowrap;padding-bottom:6px}
+.activity-chart .zero-bar{background:#cbd5e1}
+.chart-note{display:block;margin-top:9px;font-size:11px}
+.drawer-body .overlay-header{display:flex;align-items:center;justify-content:space-between}
+.drawer-body .overlay-header h2{margin:0}
+@media(max-width:900px){
+ .topbar-context{gap:0}
+ .topbar-section{font-size:14px}
+ .topbar-context .jump-search{display:none}
+ .metric-text strong{font-size:19px}
+ .toolbar select[aria-label="Сортировка групп"]{grid-column:1/-1}
+ .budget-line{grid-template-columns:minmax(0,1fr) auto;gap:6px}
+ .budget-line b{grid-column:1;overflow-wrap:normal}
+ .budget-line progress{grid-column:1/-1;grid-row:2}
+ .budget-line span{grid-column:2;grid-row:1;font-size:11px;white-space:normal;text-align:right}
+ .records-learners td[data-field="selection"],.records-groups td[data-field="selection"]{grid-column:2;grid-row:1}
+ .records-learners td[data-field="user_id"],.records-groups td[data-field="name"]{grid-column:1;grid-row:1}
+ .records-groups .group-cell{gap:6px}
+ .records-groups .group-cell b{font-size:13px}
+ .records-groups .group-cell small{display:none}
+ .records-groups .group-icon{width:27px;height:27px}
+ .records-groups .group-icon svg{width:17px}
+ .table-scroll td[data-field="selection"] input{width:32px;height:32px}
+}
+@media(max-width:360px){
+ .topbar-section{font-size:13px}
+ .metric-text strong{font-size:17px}
+ .activity-chart{gap:3px}
+ .activity-chart .bar-item small{font-size:9px}
+}

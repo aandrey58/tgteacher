@@ -14,6 +14,8 @@ test('authenticated admin',async({page,browserName},testInfo)=>{
   await page.getByRole('button',{name:'Войти'}).click();
   await expect(page.getByRole('heading',{name:'Главная',exact:true,level:1})).toBeVisible();
   await expect(page.getByText('Активность обучения',{exact:true})).toBeVisible();
+  await expect(page.getByRole('list',{name:'Ответы по датам UTC'}).getByRole('listitem')).toHaveCount(8);
+  await expect(page.locator('#section-search')).toHaveCount(0);
   await noOverflow();
   if(compact){
     const menu=page.getByRole('button',{name:'Открыть меню'});
@@ -47,6 +49,14 @@ test('authenticated admin',async({page,browserName},testInfo)=>{
       await expect(page.getByRole('cell').filter({hasText:'Food & cooking'})).toHaveCount(0);
       await search.clear();
       await expect(page.getByRole('cell').filter({hasText:'Food & cooking'})).toBeVisible();
+    }
+    if(nav==='Настройки'){
+      const search=page.getByRole('textbox',{name:'Поиск по текущему разделу'});
+      await expect(search).toHaveCount(1);
+      await search.fill('not-existing-audit-123456');
+      await expect(page.locator('.records-settings tbody tr')).toHaveCount(0);
+      await search.clear();
+      await expect.poll(()=>page.locator('.records-settings tbody tr').count()).toBeGreaterThan(0);
     }
     if(nav==='Медиатека') await expect.poll(()=>page.locator('.asset-card').count()).toBeGreaterThanOrEqual(3);
     await page.screenshot({path:testInfo.outputPath(nav.toLowerCase()+'.png'),fullPage:true});
