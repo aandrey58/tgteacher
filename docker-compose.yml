@@ -30,7 +30,7 @@ services:
       TGTEACHER_ADMINS_PATH: /app/runtime_cache/admins.txt
       TGTEACHER_RUNTIME_DIR: /app/runtime_cache
       TGTEACHER_LEGACY_ADMIN: ${TGTEACHER_LEGACY_ADMIN:-1}
-      TGTEACHER_WEB_SUPPORT: ${TGTEACHER_WEB_SUPPORT:-1}
+      TGTEACHER_WEB_SUPPORT: ${TGTEACHER_WEB_SUPPORT:-0}
       TGTEACHER_WEB_ADMIN_URL: ${TGTEACHER_WEB_ADMIN_URL:-}
     volumes:
       - ./families:/app/families
