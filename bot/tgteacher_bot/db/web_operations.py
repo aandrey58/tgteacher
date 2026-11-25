@@ -203,7 +203,7 @@ async def campaigns(offset=0):
         raise ValueError("Invalid offset")
     pool=await get_pool()
     async with pool.acquire() as c:
-        rows=await c.fetch("""SELECT w.id::text AS id,w.target,w.body,w.status,w.created_at::text AS created_at,
+        rows=await c.fetch("""SELECT w.id::text AS id,w.target,w.body,w.photo_id,w.status,w.created_at::text AS created_at,
             count(d.user_id) AS recipients,count(*) FILTER(WHERE d.status='sent') AS sent,
             count(*) FILTER(WHERE d.status='pending') AS pending,count(*) FILTER(WHERE d.status='sending') AS sending,
             count(*) FILTER(WHERE d.status='failed') AS failed,count(*) FILTER(WHERE d.status='uncertain') AS uncertain,
