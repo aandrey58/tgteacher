@@ -172,6 +172,9 @@ class TTSDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cached["reserved_microusd"], 0)
             self.assertTrue(cached["items"][0]["cached"])
             self.assertEqual(await tts.get_audio_bytes(result["items"][0]["filename"]), MP3)
+            self.budget.return_value=1
+            self.assertTrue((await tts.estimate([ITEM]))["within_budget"])
+            self.assertFalse((await tts.estimate([{**ITEM,"text":"uncached"}]))["within_budget"])
             call.assert_awaited_once()
 
     async def test_concurrent_reservations_and_no_double_charge(self):

@@ -135,8 +135,12 @@ class WebDatabaseTests(unittest.TestCase):
                     gift={"user_ids":[11],"days":15,"operation_id":str(uuid.uuid4())}
                     self.assertEqual(action("subscription",gift,True).status_code,200)
                     self.assertEqual(action("subscription",gift,True).status_code,400)
-                    self.assertEqual(action("active_subscription_count",{}).json()["count"],1)
-                    self.assertEqual(action("extend_active",{"days":3,"expected_count":1},True).status_code,200)
+                    preview=action("active_subscription_count",{}).json()
+                    self.assertEqual(preview["count"],1)
+                    extension={"days":3,"expected_count":1,"expected_snapshot":preview["snapshot"],"operation_id":str(uuid.uuid4())}
+                    self.assertEqual(action("extend_active",{**extension,"expected_snapshot":"0"*64},True).status_code,400)
+                    self.assertEqual(action("extend_active",extension,True).status_code,200)
+                    self.assertEqual(action("extend_active",extension,True).status_code,400)
                     self.assertEqual(action("set_tariff",{"months":60,"amount":100000},True).status_code,200)
                     self.assertEqual(action("tariffs",{}).json(),[{"months":60,"amount":100000}])
                     self.assertEqual(action("set_tariff",{"months":60,"remove":True},True).status_code,200)
@@ -191,6 +195,21 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertTrue(client.portal.call(ops.deliver_one,bot))
                     bot.send_document.assert_awaited_once()
                     self.assertEqual(action("support",{}).json()["items"][0]["status"],"answered")
+                    # Cancelling a superseded failed support reply must not reopen its replacement.
+                    from telegram.error import BadRequest
+                    question=client.portal.call(ops.create_question,11,"Retry question")
+                    failed_id=str(uuid.uuid4())
+                    replacement_id=str(uuid.uuid4())
+                    for campaign_id in (failed_id,replacement_id):
+                        self.assertEqual(action("create_campaign",{"campaign_id":campaign_id,"target":"support","question_id":question,"text":"Answer"},True).status_code,200)
+                    self.assertEqual(action("confirm_campaign",{"campaign_id":failed_id,"expected_count":1},True).status_code,200)
+                    bot.send_message=AsyncMock(side_effect=BadRequest("test rejection"))
+                    self.assertTrue(client.portal.call(ops.deliver_one,bot))
+                    self.assertEqual(action("confirm_campaign",{"campaign_id":replacement_id,"expected_count":1},True).status_code,200)
+                    self.assertEqual(action("cancel_campaign",{"campaign_id":failed_id},True).status_code,200)
+                    self.assertEqual(next(r for r in action("support",{}).json()["items"] if r["id"]==question)["status"],"queued")
+                    self.assertEqual(action("cancel_campaign",{"campaign_id":replacement_id},True).status_code,200)
+                    self.assertEqual(next(r for r in action("support",{}).json()["items"] if r["id"]==question)["status"],"open")
                     # Uploaded message documents and unknown-send handling use a mock bot.
                     attachment=post_file("upload_attachment?kind=document&filename=guide.txt",b"study guide")
                     self.assertEqual(attachment.status_code,200,attachment.text)

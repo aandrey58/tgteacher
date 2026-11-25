@@ -123,6 +123,9 @@ class ImageDatabaseTests(unittest.IsolatedAsyncioTestCase):
             cached = await images.generate_batch([ITEM],0)
             self.assertTrue(cached["items"][0]["cached"])
             self.assertEqual(cached["reserved_microusd"],0)
+            self.budget.return_value=1
+            self.assertTrue((await images.generate_batch([ITEM],0,True))["within_budget"])
+            self.assertFalse((await images.generate_batch([{**ITEM,"prompt":"uncached"}],0,True))["within_budget"])
             generate.assert_awaited_once()
 
     async def test_concurrent_reservations(self):

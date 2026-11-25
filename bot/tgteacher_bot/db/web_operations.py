@@ -4,6 +4,7 @@ The polling bot owns Telegram credentials. HTTP handlers only enqueue messages.
 Uncertain sends are never automatically repeated.
 """
 import asyncio
+import hashlib
 import io
 import uuid
 from datetime import datetime
@@ -37,6 +38,10 @@ async def init_operations(c):
         );
         ALTER TABLE web_system_control ADD COLUMN IF NOT EXISTS capture_started TIMESTAMPTZ;
         INSERT INTO web_system_control(singleton) VALUES(true) ON CONFLICT DO NOTHING;
+        CREATE TABLE IF NOT EXISTS web_subscription_extensions (
+            operation_id UUID PRIMARY KEY, days INTEGER NOT NULL, recipient_count INTEGER NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
         CREATE TABLE IF NOT EXISTS web_support (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
             question TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -65,6 +70,11 @@ async def init_operations(c):
             PRIMARY KEY(campaign_id,user_id)
         );
         CREATE INDEX IF NOT EXISTS web_pending_delivery_idx ON web_deliveries(status,changed_at);
+        CREATE INDEX IF NOT EXISTS web_campaign_created_idx ON web_campaigns(created_at DESC,id DESC);
+        CREATE INDEX IF NOT EXISTS web_campaign_support_idx ON web_campaigns(support_id,created_at DESC,id DESC) WHERE support_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS web_support_order_idx ON web_support((status='open') DESC,id DESC);
+        CREATE INDEX IF NOT EXISTS web_deliveries_user_idx ON web_deliveries(user_id);
+        CREATE INDEX IF NOT EXISTS web_support_user_idx ON web_support(user_id);
     """)
 
 
@@ -303,8 +313,9 @@ async def cancel_campaign(campaign_id):
             if row["support_id"] and await c.fetchval("SELECT 1 FROM web_deliveries WHERE campaign_id=$1 AND status IN ('sending','sent','uncertain')",ident):
                 raise ValueError("Answer already dispatched or uncertain")
             await c.execute("UPDATE web_campaigns SET status='cancelled' WHERE id=$1",ident)
-            await c.execute("UPDATE web_deliveries SET status='cancelled',changed_at=now() WHERE campaign_id=$1 AND status='pending'",ident)
-            if row["support_id"] and row["status"]=="queued":
+            cancelled=await c.execute("UPDATE web_deliveries SET status='cancelled',changed_at=now() WHERE campaign_id=$1 AND status='pending'",ident)
+            # A failed old reply may have been superseded by a new queued reply.
+            if row["support_id"] and row["status"]=="queued" and cancelled!="UPDATE 0":
                 await c.execute("UPDATE web_support SET status='open',answer=NULL WHERE id=$1 AND status='queued'",row["support_id"])
     return {"ok":True}
 
@@ -314,12 +325,18 @@ async def campaigns(offset=0,support_only=False):
         raise ValueError("Invalid offset")
     pool=await get_pool()
     async with pool.acquire() as c:
-        rows=await c.fetch("""SELECT w.id::text AS id,w.target,w.body,w.photo_id,w.attachment_id,w.status,w.created_at::text AS created_at,
+        rows=await c.fetch("""WITH page AS (
+                SELECT * FROM web_campaigns WHERE (NOT $2::boolean OR target='support')
+                ORDER BY created_at DESC,id DESC LIMIT 51 OFFSET $1
+            )
+            SELECT w.id::text AS id,w.target,w.body,w.photo_id,w.attachment_id,w.status,w.created_at::text AS created_at,
             count(d.user_id) AS recipients,count(*) FILTER(WHERE d.status='sent') AS sent,
             count(*) FILTER(WHERE d.status='pending') AS pending,count(*) FILTER(WHERE d.status='sending') AS sending,
             count(*) FILTER(WHERE d.status='failed') AS failed,count(*) FILTER(WHERE d.status='uncertain') AS uncertain,
             count(*) FILTER(WHERE d.status='cancelled') AS cancelled
-            FROM web_campaigns w LEFT JOIN web_deliveries d ON d.campaign_id=w.id WHERE (NOT $2::boolean OR w.target='support') GROUP BY w.id ORDER BY w.created_at DESC LIMIT 51 OFFSET $1""",offset,support_only)
+            FROM page w LEFT JOIN web_deliveries d ON d.campaign_id=w.id
+            GROUP BY w.id,w.target,w.body,w.photo_id,w.attachment_id,w.status,w.created_at
+            ORDER BY w.created_at DESC,w.id DESC""",offset,support_only)
     return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50}
 
 
@@ -361,8 +378,8 @@ async def deliver_one(bot):
         pass
     async with pool.acquire() as c:
         async with c.transaction():
-            await c.execute("UPDATE web_deliveries SET status=$3,changed_at=now() WHERE campaign_id=$1 AND user_id=$2 AND status='sending'",row["campaign_id"],row["user_id"],status)
-            if row["support_id"] is not None:
+            changed=await c.execute("UPDATE web_deliveries SET status=$3,changed_at=now() WHERE campaign_id=$1 AND user_id=$2 AND status='sending'",row["campaign_id"],row["user_id"],status)
+            if changed=="UPDATE 1" and row["support_id"] is not None:
                 if status=="sent":
                     await c.execute("UPDATE web_support SET status='answered' WHERE id=$1 AND status='queued'",row["support_id"])
                 elif status=="failed":
@@ -377,25 +394,39 @@ async def delivery_job(context):
         await asyncio.sleep(0.25)
 
 
-async def extend_active(days, expected_count):
+def subscriber_snapshot(user_ids):
+    return hashlib.sha256(",".join(str(uid) for uid in user_ids).encode("ascii")).hexdigest()
+
+
+async def extend_active(days, expected_count, expected_snapshot, operation_id):
     if type(days) is not int or not 1<=days<=365 or type(expected_count) is not int or expected_count<1:
         raise ValueError("Invalid extension")
+    if not isinstance(expected_snapshot,str) or len(expected_snapshot)!=64:
+        raise ValueError("Invalid recipient snapshot")
+    ident=uuid.UUID(operation_id)
     pool=await get_pool()
     async with pool.acquire() as c:
         async with c.transaction():
+            # A global extension lock serializes previews applied to the same subscriber set.
+            await c.execute("SELECT pg_advisory_xact_lock(847231,97)")
+            if await c.fetchval("SELECT 1 FROM web_subscription_extensions WHERE operation_id=$1",ident):
+                raise ValueError("Extension operation already applied")
             rows=await c.fetch(f"SELECT user_id FROM users WHERE {VIP} AND subscription_until IS NOT NULL ORDER BY user_id FOR UPDATE")
-            if len(rows)!=expected_count:
-                raise ValueError("Active subscriber count changed")
+            selected=[r["user_id"] for r in rows]
+            if len(selected)!=expected_count or subscriber_snapshot(selected)!=expected_snapshot:
+                raise ValueError("Active subscriber selection changed")
             await c.execute("""UPDATE users SET subscription_until=greatest(now(),coalesce(subscription_until,now()))
-                +make_interval(days=>$2::int) WHERE user_id=ANY($1::bigint[]) AND subscription_until IS NOT NULL""",
-                [r["user_id"] for r in rows],days)
-    return {"count":len(rows)}
+                +make_interval(days=>$2::int) WHERE user_id=ANY($1::bigint[]) AND subscription_until IS NOT NULL""",selected,days)
+            await c.execute("INSERT INTO web_subscription_extensions(operation_id,days,recipient_count) VALUES($1,$2,$3)",ident,days,len(selected))
+    return {"count":len(selected)}
 
 
 async def active_subscription_count():
     pool=await get_pool()
     async with pool.acquire() as c:
-        return {"count":await c.fetchval(f"SELECT count(*) FROM users WHERE {VIP} AND subscription_until IS NOT NULL")}
+        rows=await c.fetch(f"SELECT user_id FROM users WHERE {VIP} AND subscription_until IS NOT NULL ORDER BY user_id")
+    selected=[r["user_id"] for r in rows]
+    return {"count":len(selected),"snapshot":subscriber_snapshot(selected)}
 
 
 async def reports(kind="learners", days=30, family_id=None, start_date=None, end_date=None):

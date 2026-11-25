@@ -107,8 +107,10 @@ async def generate_batch(items, max_cost_microusd, estimate_only=False):
             existing = {r["cache_key"]: r for r in await conn.fetch(
                 "SELECT cache_key,status,asset_id,reserved_microusd FROM image_requests WHERE cache_key=ANY($1::text[])",list(unique))}
             cost = sum(p.cost_microusd for key,p,_ in unique.values() if key not in existing)
+            reservation_time=await conn.fetchval("SELECT statement_timestamp()")
             spent = int(await conn.fetchval("""SELECT coalesce(sum(reserved_microusd),0) FROM image_requests
-                WHERE reserved_at >= date_trunc('day',statement_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'"""))
+                WHERE reserved_at >= date_trunc('day',$1::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                AND reserved_at < (date_trunc('day',$1::timestamptz AT TIME ZONE 'UTC') + interval '1 day') AT TIME ZONE 'UTC'""",reservation_time))
             limit = daily_limit()
             if estimate_only:
                 return {"estimated_microusd": cost, "daily_reserved_microusd": spent, "daily_limit_microusd": limit,
@@ -119,7 +121,7 @@ async def generate_batch(items, max_cost_microusd, estimate_only=False):
             for key,p,_ in unique.values():
                 if key not in existing:
                     await conn.execute("""INSERT INTO image_requests(cache_key,provider,model,size,status,reserved_microusd,reserved_at)
-                        VALUES($1,$2,$3,$4,'pending',$5,statement_timestamp())""",key,p.name,p.model,p.size,p.cost_microusd)
+                        VALUES($1,$2,$3,$4,'pending',$5,$6)""",key,p.name,p.model,p.size,p.cost_microusd,reservation_time)
     semaphore = asyncio.Semaphore(2)
 
     async def run(entry):

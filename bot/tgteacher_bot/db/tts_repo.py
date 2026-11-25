@@ -180,11 +180,12 @@ async def _existing(conn, prepared):
     return {r["cache_key"]: r for r in await conn.fetch("SELECT cache_key,status,asset_id,reserved_microusd FROM tts_requests WHERE cache_key=ANY($1::text[])", keys)}
 
 
-async def _spent(conn):
+async def _spent(conn, reservation_time=None):
     return int(await conn.fetchval("""
         SELECT coalesce(sum(reserved_microusd),0) FROM tts_requests
-        WHERE reserved_at >= date_trunc('day', statement_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-    """))
+        WHERE reserved_at >= date_trunc('day', coalesce($1::timestamptz,statement_timestamp()) AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+        AND reserved_at < (date_trunc('day', coalesce($1::timestamptz,statement_timestamp()) AT TIME ZONE 'UTC') + interval '1 day') AT TIME ZONE 'UTC'
+    """,reservation_time))
 
 
 def _cost(prepared, existing):
@@ -198,8 +199,9 @@ async def estimate(items):
         existing = await _existing(conn, prepared)
         spent = await _spent(conn)
     cost = _cost(prepared, existing)
+    limit=daily_limit()
     return {"estimated_microusd": cost, "daily_reserved_microusd": spent,
-            "daily_limit_microusd": daily_limit(), "within_budget": spent + cost <= daily_limit(),
+            "daily_limit_microusd": limit, "within_budget": cost == 0 or spent + cost <= limit,
             "items": [{"cache_key": key, "status": existing[key]["status"] if key in existing else "new",
                        "asset_id": existing[key]["asset_id"] if key in existing else None}
                       for key, *_ in prepared]}
@@ -226,14 +228,15 @@ async def generate_batch(items, max_cost_microusd):
             cost = _cost(prepared, existing)
             if cost > max_cost_microusd:
                 raise ValueError("Estimated cost exceeds approved maximum")
-            if cost and await _spent(conn) + cost > daily_limit():
+            reservation_time=await conn.fetchval("SELECT statement_timestamp()")
+            if cost and await _spent(conn,reservation_time) + cost > daily_limit():
                 raise ValueError("Daily TTS budget exceeded")
             for key, p, voice, _, price in unique.values():
                 if key not in existing:
                     await conn.execute("""
                         INSERT INTO tts_requests(cache_key,provider,model,voice,status,reserved_microusd,reserved_at)
-                        VALUES($1,$2,$3,$4,'pending',$5,statement_timestamp())
-                    """, key, p.name, p.model, voice, price)
+                        VALUES($1,$2,$3,$4,'pending',$5,$6)
+                    """, key, p.name, p.model, voice, price,reservation_time)
     semaphore = asyncio.Semaphore(3)
 
     async def run(entry):
