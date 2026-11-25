@@ -2,6 +2,9 @@ import {test,expect} from '@playwright/test';
 
 for (const viewport of [{width:1536,height:960},{width:390,height:844}]) {
  test('authenticated admin at '+viewport.width,async({page},testInfo)=>{
+  test.setTimeout(90000);
+  const browserErrors=[];
+  page.on('pageerror',e=>browserErrors.push(e.message));
   await page.setViewportSize(viewport);
   await page.goto('http://127.0.0.1:8080/');
   await page.getByLabel('Administrator credential').fill('ci-only-web-admin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
@@ -16,6 +19,18 @@ for (const viewport of [{width:1536,height:960},{width:390,height:844}]) {
     await expect(page.getByText('Loading…',{exact:true})).toHaveCount(0);
     await expect(page.getByRole('alert')).toHaveCount(0);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBeTruthy();
+    if(nav==='Groups') {
+      await expect(page.getByText('Travel essentials',{exact:true}).first()).toBeVisible();
+      const search=page.getByPlaceholder('Search word groups…');
+      await search.pressSequentially('passport',{delay:75});
+      await expect(search).toBeFocused();
+      await expect(search).toHaveValue('passport');
+      await expect(page.getByRole('cell').filter({hasText:'Travel essentials'})).toBeVisible();
+      await expect(page.getByRole('cell').filter({hasText:'Food & cooking'})).toHaveCount(0);
+      await search.clear();
+      await expect(page.getByRole('cell').filter({hasText:'Food & cooking'})).toBeVisible();
+    }
+    if(nav==='Media') await expect(page.locator('.asset-card')).toHaveCount(3);
     await page.screenshot({path:testInfo.outputPath(nav.toLowerCase()+'.png'),fullPage:true});
   }
   if(viewport.width<760)await page.getByRole('button',{name:'Open menu'}).click();
@@ -47,5 +62,6 @@ for (const viewport of [{width:1536,height:960},{width:390,height:844}]) {
   await page.getByRole('button',{name:'Close',exact:true}).click();
   await page.getByRole('button',{name:'Sign out'}).click();
   await expect(page.getByRole('button',{name:'Sign in'})).toBeVisible();
+  expect(browserErrors).toEqual([]);
  });
 }
