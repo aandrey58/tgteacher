@@ -22,6 +22,12 @@ async def init_operations(c):
             processed_at TIMESTAMP, result_subscription_until TIMESTAMPTZ
         );
         ALTER TABLE payments ADD COLUMN IF NOT EXISTS result_subscription_until TIMESTAMPTZ;
+        CREATE TABLE IF NOT EXISTS web_admin_list_change (
+            singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK(singleton),
+            expected_ids JSONB, desired_ids JSONB, status TEXT NOT NULL DEFAULT 'idle',
+            changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        INSERT INTO web_admin_list_change(singleton) VALUES(true) ON CONFLICT DO NOTHING;
         CREATE TABLE IF NOT EXISTS web_system_control (
             singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK(singleton),
             auto_snapshots BOOLEAN,
@@ -488,3 +494,89 @@ async def upload_message_attachment(filename,kind,data):
     async with pool.acquire() as c:
         await c.execute("INSERT INTO web_message_attachments VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",ident,filename,kind,data)
     return {"asset_id":ident,"filename":filename,"kind":kind}
+
+
+def legacy_admin_ids():
+    from tgteacher_bot.core.paths import admins_path
+    path=admins_path()
+    try:
+        raw=path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    result=[]
+    for line in raw.splitlines():
+        value=line.strip()
+        if not value:
+            continue
+        if not value.isascii() or not value.isdecimal() or not 0<int(value)<2**53:
+            raise ValueError("Invalid legacy administrator list")
+        result.append(int(value))
+    return sorted(set(result))
+
+
+async def admin_list():
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        status=await c.fetchval("SELECT status FROM web_admin_list_change WHERE singleton")
+    return {"ids":[str(i) for i in legacy_admin_ids()],"status":status}
+
+
+async def change_admin_list(expected_ids, desired_ids):
+    import json
+    # Legacy file controls the Telegram admin/link only; no web secret is changed.
+    if expected_ids==[]:
+        expected=[]
+    else:
+        expected=ids(expected_ids)
+    desired=ids(desired_ids)
+    if expected!=legacy_admin_ids():
+        raise ValueError("Administrator list changed")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        result=await c.execute("""UPDATE web_admin_list_change SET expected_ids=$1::jsonb,desired_ids=$2::jsonb,
+            status='queued',changed_at=now() WHERE singleton AND status NOT IN ('queued','running')""",json.dumps(expected),json.dumps(desired))
+        if result!="UPDATE 1":
+            raise ValueError("Another administrator change is pending")
+    return {"status":"queued"}
+
+
+def replace_legacy_admins(expected,desired):
+    import os
+    import tempfile
+    from tgteacher_bot.core.paths import admins_path
+    path=admins_path()
+    if legacy_admin_ids()!=expected:
+        raise ValueError("Administrator list changed before execution")
+    if path.is_symlink() or not path.parent.is_dir():
+        raise ValueError("Invalid administrator path")
+    fd,name=tempfile.mkstemp(prefix=".admins-",dir=path.parent)
+    try:
+        with os.fdopen(fd,"w",encoding="utf-8") as out:
+            out.write("".join(str(i)+"\n" for i in desired))
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(name,path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+async def admin_list_job(context):
+    import json
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        # Recover a claim after restart without repeating an unknown write.
+        await c.execute("UPDATE web_admin_list_change SET status='uncertain' WHERE singleton AND status='running' AND changed_at<now()-interval '10 minutes'")
+        row=await c.fetchrow("""UPDATE web_admin_list_change SET status='running',changed_at=now()
+            WHERE singleton AND status='queued' RETURNING expected_ids,desired_ids""")
+    if not row:
+        return
+    status="failed"
+    try:
+        expected=row["expected_ids"] if isinstance(row["expected_ids"],list) else json.loads(row["expected_ids"])
+        desired=row["desired_ids"] if isinstance(row["desired_ids"],list) else json.loads(row["desired_ids"])
+        replace_legacy_admins(expected,desired)
+        status="ready"
+    finally:
+        async with pool.acquire() as c:
+            await c.execute("UPDATE web_admin_list_change SET status=$1,changed_at=now() WHERE singleton",status)
