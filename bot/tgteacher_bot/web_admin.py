@@ -123,7 +123,28 @@ async def section_metrics(c,page):
     return dict(await c.fetchrow(statements[page])) if page in statements else {}
 
 
-async def page_data(page, offset, query):
+FILTERS = {
+    "groups": {"All", "Published", "Archived"},
+    "drafts": {"All", "Draft", "Published"},
+    "media": {"All", "image", "audio"},
+    "learners": {"All", "Free", "VIP"},
+    "budgets": {"All", "pending", "ready", "failed"},
+}
+GROUP_SORT = {"updated": "updated_at DESC NULLS LAST,f.id DESC", "name": "lower(f.name),f.id", "words": "words DESC,f.id DESC"}
+
+
+async def publishing_activity(c):
+    rows = await c.fetch("""SELECT f.id AS family_id,f.name,v.version,v.created_at::text AS created_at,v.restored_from
+        FROM family_versions v JOIN families f ON f.id=v.family_id
+        ORDER BY v.created_at DESC,f.id DESC,v.version DESC LIMIT 6""")
+    return [dict(r) for r in rows]
+
+
+async def page_data(page, offset, query, status="All", access="All", sort="updated"):
+    if status not in FILTERS.get(page, {"All"}) or access not in ("All","FREE","VIP","VIP+FREE") or sort not in GROUP_SORT:
+        raise ValueError("Invalid filter")
+    if page!="groups" and (access!="All" or sort!="updated"):
+        raise ValueError("Group filters only")
     pool=await get_pool()
     async with pool.acquire() as c:
         metrics=await section_metrics(c,page)
@@ -140,16 +161,21 @@ async def page_data(page, offset, query):
             activity=await c.fetch("""SELECT answered_at::date::text AS day,count(*) AS attempts,
                 count(DISTINCT user_id) AS learners FROM learner_answer_events
                 WHERE answered_at>=now()-interval '7 days' GROUP BY 1 ORDER BY 1""")
-            return {"metrics":dict(totals),"activity":[dict(r) for r in activity]}
+            return {"metrics":dict(totals),"activity":[dict(r) for r in activity],"publishing":await publishing_activity(c)}
         if page=="groups":
-            rows=await c.fetch("""SELECT f.id,f.name,f.description,f.target,f.content_version,
+            rows=await c.fetch(f"""SELECT f.id,f.name,f.description,f.target,f.content_version,
                 CASE WHEN f.archived_at IS NULL THEN 'Published' ELSE 'Archived' END AS status,
                 (SELECT count(*) FROM stage1_words w WHERE w.family_id=f.id AND w.archived_at IS NULL) AS words,
                 (SELECT count(DISTINCT stage_num) FROM active_task_positions t WHERE t.family_idx=f.id) AS stages,
                 (SELECT count(*) FROM user_family_progress p WHERE p.family_idx=f.id) AS learners,
                 (SELECT max(created_at)::text FROM family_versions v WHERE v.family_id=f.id) AS updated_at
-                FROM families f WHERE strpos(lower(f.name),lower($1))>0 OR $1=''
-                ORDER BY f.id DESC LIMIT 51 OFFSET $2""",query,offset)
+                FROM families f WHERE ($1='' OR strpos(lower(concat_ws(' ',f.name,f.description)),lower($1))>0
+                    OR EXISTS(SELECT 1 FROM stage1_words w WHERE w.family_id=f.id AND w.archived_at IS NULL
+                       AND strpos(lower(concat_ws(' ',w.word,w.translation)),lower($1))>0))
+                AND ($3='All' OR ($3='Published' AND f.archived_at IS NULL) OR ($3='Archived' AND f.archived_at IS NOT NULL))
+                AND ($4='All' OR coalesce(f.target,'VIP+FREE')=$4)
+                ORDER BY {GROUP_SORT[sort]} LIMIT 51 OFFSET $2""",query,offset,status,access)
+            return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50,"metrics":metrics,"publishing":await publishing_activity(c)}
         elif page=="drafts":
             rows=await c.fetch("""SELECT * FROM (
                 SELECT id::text AS draft_id,'new' AS kind,family_id,revision,
@@ -158,14 +184,16 @@ async def page_data(page, offset, query):
                 UNION ALL SELECT id::text,'edit',family_id,revision,
                     CASE WHEN published_version IS NULL THEN 'Draft' ELSE 'Published' END,created_at::text
                 FROM family_edit_drafts WHERE deleted_at IS NULL
-                ) d WHERE $1='' OR strpos(lower(draft_id),lower($1))>0 ORDER BY updated_at DESC LIMIT 51 OFFSET $2""",query,offset)
+                 ) d WHERE ($1='' OR strpos(lower(draft_id),lower($1))>0)
+                AND ($3='All' OR status=$3) ORDER BY updated_at DESC,draft_id LIMIT 51 OFFSET $2""",query,offset,status)
         elif page=="learners":
             rows=await c.fetch("""SELECT u.user_id::text AS user_id,u.username,u.first_name,u.last_name,
                 CASE WHEN u.is_subscribed AND (u.subscription_until IS NULL OR u.subscription_until>now()) THEN 'VIP' ELSE 'Free' END AS plan,
                 u.last_active_at::text AS last_active_at,u.subscription_until::text AS subscription_until,
                 (SELECT count(*) FROM srs_cards c WHERE c.user_id=u.user_id AND c.due<=now()) due_cards
-                FROM users u WHERE $1='' OR strpos(lower(concat_ws(' ',u.user_id::text,u.username,u.first_name,u.last_name)),lower($1))>0
-                ORDER BY last_active_at DESC NULLS LAST,u.user_id LIMIT 51 OFFSET $2""",query,offset)
+                FROM users u WHERE ($1='' OR strpos(lower(concat_ws(' ',u.user_id::text,u.username,u.first_name,u.last_name)),lower($1))>0)
+                AND ($3='All' OR (CASE WHEN u.is_subscribed AND (u.subscription_until IS NULL OR u.subscription_until>now()) THEN 'VIP' ELSE 'Free' END)=$3)
+                ORDER BY last_active_at DESC NULLS LAST,u.user_id LIMIT 51 OFFSET $2""",query,offset,status)
         elif page=="reviews":
             rows=await c.fetch("""SELECT f.id,f.name,count(*) AS cards,count(*) FILTER(WHERE c.due<=now()) AS due,
                 count(*) FILTER(WHERE c.card IS NOT NULL) AS rated
@@ -176,8 +204,9 @@ async def page_data(page, offset, query):
             rows=await c.fetch("""SELECT * FROM (
                 SELECT 'TTS' AS service,provider,model,status,reserved_microusd,reserved_at::text AS reserved_at FROM tts_requests
                 UNION ALL SELECT 'Images',provider,model,status,reserved_microusd,reserved_at::text FROM image_requests
-                ) r WHERE $1='' OR strpos(lower(concat_ws(' ',service,provider,model,status)),lower($1))>0
-                ORDER BY reserved_at DESC LIMIT 51 OFFSET $2""",query,offset)
+                 ) r WHERE ($1='' OR strpos(lower(concat_ws(' ',service,provider,model,status)),lower($1))>0)
+                AND ($3='All' OR status=$3)
+                ORDER BY reserved_at DESC,service,provider,model LIMIT 51 OFFSET $2""",query,offset,status)
             today=await c.fetch("""SELECT 'TTS' AS service,coalesce(sum(reserved_microusd),0)::bigint AS reserved FROM tts_requests WHERE reserved_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
               UNION ALL SELECT 'Images',coalesce(sum(reserved_microusd),0)::bigint FROM image_requests WHERE reserved_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'""")
             return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50,"metrics":{r["service"]:r["reserved"] for r in today},"limits":{"TTS":tts.daily_limit(),"Images":images.daily_limit()}}
@@ -188,7 +217,7 @@ async def page_data(page, offset, query):
             rows=None
     if rows is not None:
         return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50,"metrics":metrics}
-    kind={"media":"all","tts":"audio","images":"image"}[page]
+    kind={"media":"all" if status=="All" else status,"tts":"audio","images":"image"}[page]
     async with pool.acquire() as c:
         rows=await c.fetch("""
             SELECT * FROM (
@@ -254,7 +283,8 @@ def build_app(secret, origin, static_dir=None, initialize=True):
             query=request.query_params.get("q","")
             if not 0<=offset<=1000000 or len(query)>200:
                 raise ValueError("Invalid search or pagination")
-            return reply(await page_data(route,offset,query))
+            return reply(await page_data(route,offset,query,request.query_params.get("status","All"),
+                request.query_params.get("access","All"),request.query_params.get("sort","updated")))
         if request.method=="GET" and route=="asset":
             kind=request.query_params.get("kind")
             ident=request.query_params.get("id")
