@@ -319,13 +319,18 @@ def build_app(secret, origin, static_dir=None, initialize=True):
                 name="report.xlsx"
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             return Response(data,media_type=mime,headers={"Content-Disposition":f'attachment; filename="{name}"',"Cache-Control":"no-store"})
-        if request.method=="POST" and route in ("import_zip","upload_media"):
+        if request.method=="POST" and route in ("import_zip","upload_media","upload_attachment"):
             if request.headers.get("x-confirm")!="true":
                 raise ValueError("Confirmation required")
             raw=await read_bytes(request,transfer.MAX_ARCHIVE if route=="import_zip" else transfer.MAX_FILE)
             status="failed"
             try:
-                result=await transfer.import_archive(raw) if route=="import_zip" else await transfer.upload_asset(request.query_params.get("kind"),raw)
+                if route=="import_zip":
+                    result=await transfer.import_archive(raw)
+                elif route=="upload_attachment":
+                    result=await ops.upload_message_attachment(request.query_params.get("filename"),request.query_params.get("kind"),raw)
+                else:
+                    result=await transfer.upload_asset(request.query_params.get("kind"),raw)
                 status="ok"
                 return reply(result)
             finally:
