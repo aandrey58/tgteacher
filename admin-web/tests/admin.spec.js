@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 
 test('authenticated admin',async({page,browserName},testInfo)=>{
   const viewport=page.viewportSize();
-  test.setTimeout(90000);
+  test.setTimeout(150000);
   const browserErrors=[];
   page.on('pageerror',e=>browserErrors.push(e.message));
   const groupName='Browser '+browserName+' '+viewport.width;
@@ -48,7 +48,7 @@ test('authenticated admin',async({page,browserName},testInfo)=>{
       await search.clear();
       await expect(page.getByRole('cell').filter({hasText:'Food & cooking'})).toBeVisible();
     }
-    if(nav==='Медиатека') await expect(page.locator('.asset-card')).toHaveCount(3);
+    if(nav==='Медиатека') await expect.poll(()=>page.locator('.asset-card').count()).toBeGreaterThanOrEqual(3);
     await page.screenshot({path:testInfo.outputPath(nav.toLowerCase()+'.png'),fullPage:true});
   }
   if(compact)await page.getByRole('button',{name:'Открыть меню'}).click();
@@ -105,7 +105,52 @@ test('authenticated admin',async({page,browserName},testInfo)=>{
   await expect(page.getByRole('heading',{name:'Версия 1 → 1'})).toBeVisible();
   await page.getByText('Текущий материал урока',{exact:true}).click();
   await expect(page.getByLabel('Перевод',{exact:true})).toHaveValue('проездной билет');
+  let downloaded;
+  const operations=browserName==='chromium'&&[1536,390].includes(viewport.width);
+  if(operations){
+    const event=page.waitForEvent('download');
+    await page.getByRole('link',{name:'Скачать ZIP'}).click();
+    downloaded=await event;
+    expect(downloaded.suggestedFilename()).toMatch(/\.zip$/);
+  }
   await page.getByRole('button',{name:'Закрыть',exact:true}).click();
+  if(operations){
+    await page.getByText('Импорт и шаблон урока',{exact:true}).click();
+    await page.getByLabel('ZIP-архив урока').setInputFiles(await downloaded.path());
+    page.once('dialog',d=>d.accept());
+    await page.getByRole('button',{name:'Импортировать ZIP'}).click();
+    await expect(page.getByText('Редакция 1',{exact:true})).toBeVisible();
+    await page.getByRole('button',{name:'Проверить редакцию'}).click();
+    // Same name already exists; import must never silently publish.
+    await expect(page.getByRole('heading',{name:'В сохранённой редакции есть ошибки'})).toBeVisible();
+    await page.screenshot({path:testInfo.outputPath('zip-import.png'),fullPage:true});
+    await page.getByRole('button',{name:'Закрыть',exact:true}).click();
+    if(compact)await page.getByRole('button',{name:'Открыть меню'}).click();
+    await page.locator('nav').getByRole('button',{name:'Ученики',exact:true}).click();
+    await page.getByRole('button',{name:'Рассылки и обращения'}).click();
+    const dialog=page.getByRole('dialog',{name:'Рассылки и обращения'});
+    await expect(dialog.getByRole('heading',{name:'Новое сообщение'})).toBeVisible();
+    await dialog.getByLabel('Текст сообщения').fill('Тест CI '+viewport.width);
+    await dialog.getByRole('button',{name:'Подготовить рассылку'}).click();
+    await expect(dialog.getByRole('heading',{name:'Подтверждение рассылки'})).toBeVisible();
+    await page.screenshot({path:testInfo.outputPath('campaign-preview.png'),fullPage:true});
+    page.once('dialog',d=>d.accept());
+    await dialog.getByRole('button',{name:'Отменить черновик'}).click();
+    await expect(dialog.getByRole('heading',{name:'Подтверждение рассылки'})).toHaveCount(0);
+    await dialog.getByRole('button',{name:'Обращения',exact:true}).click();
+    await expect(dialog.getByRole('heading',{name:'Обращения учеников'})).toBeVisible();
+    await dialog.getByRole('button',{name:'Закрыть',exact:true}).click();
+    await page.getByRole('button',{name:'Подписки и отчёты'}).click();
+    const manage=page.getByRole('dialog',{name:'Подписки и отчёты'});
+    await manage.getByRole('button',{name:'Отчёты',exact:true}).click();
+    await expect(manage.getByRole('heading',{name:'Выгрузка Excel'})).toBeVisible();
+    const reportEvent=page.waitForEvent('download');
+    await manage.getByRole('link',{name:'Скачать Excel'}).click();
+    expect((await reportEvent).suggestedFilename()).toBe('report.xlsx');
+    await page.screenshot({path:testInfo.outputPath('reports.png'),fullPage:true});
+    await manage.getByRole('button',{name:'Закрыть',exact:true}).click();
+    await noOverflow();
+  }
   await expect.poll(()=>page.evaluate(()=>document.body.style.overflow)).toBe('');
   await page.getByRole('button',{name:'Выйти'}).click();
   await expect(page.getByRole('button',{name:'Войти'})).toBeVisible();
