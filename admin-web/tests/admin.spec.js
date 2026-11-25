@@ -20,12 +20,12 @@ for (const [browserName,viewport] of [...sizes.map(v=>['chromium',v]),['webkit',
   await noOverflow();
   if(compact){
     const menu=page.getByRole('button',{name:'Открыть меню'});
+    expect(await menu.evaluate(el=>el.getBoundingClientRect().width)).toBeGreaterThanOrEqual(44);
     await menu.tap();
     const drawer=page.getByRole('dialog',{name:'Навигация'});
     await expect(drawer).toBeVisible();
     await expect(drawer.getByRole('button',{name:'Закрыть'})).toBeFocused();
     await expect(drawer.locator('[aria-current="page"]')).toHaveText('Главная');
-    expect(await menu.evaluate(el=>el.getBoundingClientRect().width)).toBeGreaterThanOrEqual(44);
     await page.screenshot({path:testInfo.outputPath('navigation.png')});
     await page.keyboard.press('Escape');
     await expect(drawer).toHaveCount(0);
@@ -83,6 +83,7 @@ for (const [browserName,viewport] of [...sizes.map(v=>['chromium',v]),['webkit',
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(page.getByLabel('Перевод',{exact:true})).toHaveValue('проездной билет');
   await noOverflow();
+  expect(await page.locator('dialog.modal-shell').evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBeTruthy();
   await page.getByRole('button',{name:'Сохранить редакцию'}).click();
   await expect(page.getByText('Редакция 2',{exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Проверить редакцию'}).click();
