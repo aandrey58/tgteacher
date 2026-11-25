@@ -256,3 +256,77 @@ async def delivery_job(context):
         if not await deliver_one(context.bot):
             break
         await asyncio.sleep(0.25)
+
+
+async def extend_active(days, expected_count):
+    if type(days) is not int or not 1<=days<=365 or type(expected_count) is not int or expected_count<1:
+        raise ValueError("Invalid extension")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        async with c.transaction():
+            rows=await c.fetch(f"SELECT user_id FROM users WHERE {VIP} AND subscription_until IS NOT NULL ORDER BY user_id FOR UPDATE")
+            if len(rows)!=expected_count:
+                raise ValueError("Active subscriber count changed")
+            await c.execute("""UPDATE users SET subscription_until=greatest(now(),coalesce(subscription_until,now()))
+                +make_interval(days=>$2::int) WHERE user_id=ANY($1::bigint[]) AND subscription_until IS NOT NULL""",
+                [r["user_id"] for r in rows],days)
+    return {"count":len(rows)}
+
+
+async def active_subscription_count():
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        return {"count":await c.fetchval(f"SELECT count(*) FROM users WHERE {VIP} AND subscription_until IS NOT NULL")}
+
+
+async def reports(kind="learners", days=30, family_id=None):
+    if type(days) is not int or not 1<=days<=365:
+        raise ValueError("Invalid report range")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        if kind in ("learners","new","inactive"):
+            condition={"learners":"TRUE","new":"registered_at>=now()-$1::int*interval '1 day'","inactive":"last_active_at<now()-$1::int*interval '1 day' OR last_active_at IS NULL"}[kind]
+            args=[] if kind=="learners" else [days]
+            rows=await c.fetch(f"""SELECT user_id::text AS user_id,username,first_name,last_name,registered_at::text AS registered_at,
+                last_active_at::text AS last_active_at,subscription_until::text AS subscription_until,is_subscribed
+                FROM users WHERE {condition} ORDER BY user_id LIMIT 10001""",*args)
+        elif kind=="progress":
+            if type(family_id) is not int or family_id<1:
+                raise ValueError("Family required")
+            rows=await c.fetch("""SELECT p.user_id::text AS user_id,p.stage_num,count(*) AS completed,
+                count(*) FILTER(WHERE p.is_correct=1) AS correct
+                FROM active_user_task_progress p WHERE p.family_idx=$1 AND p.is_done=1
+                GROUP BY p.user_id,p.stage_num ORDER BY p.user_id,p.stage_num LIMIT 10001""",family_id)
+        elif kind=="payments":
+            if not await c.fetchval("SELECT to_regclass('payments') IS NOT NULL"):
+                return []
+            rows=await c.fetch("""SELECT payment_id,user_id::text AS user_id,months,amount AS amount_kopecks,status,
+                created_at::text AS created_at FROM payments WHERE created_at>=now()-$1::int*interval '1 day'
+                ORDER BY created_at DESC LIMIT 10001""",days)
+        elif kind=="system":
+            if not await c.fetchval("SELECT to_regclass('system_snapshots') IS NOT NULL"):
+                return []
+            rows=await c.fetch("""SELECT ts::text AS ts,data::text AS data FROM system_snapshots
+                WHERE ts>=now()-$1::int*interval '1 day' ORDER BY ts DESC LIMIT 10001""",days)
+        else:
+            raise ValueError("Invalid report type")
+    if len(rows)>10000:
+        raise ValueError("Report exceeds 10000 rows; narrow the date range")
+    return [dict(r) for r in rows]
+
+
+def workbook(rows):
+    from openpyxl import Workbook
+    wb=Workbook(write_only=True)
+    ws=wb.create_sheet("Отчёт")
+    if rows:
+        keys=list(rows[0])
+        ws.append(keys)
+        for row in rows:
+            # Do not let user-provided text become executable spreadsheet formulas.
+            ws.append(["'"+v if isinstance(v,str) and v.lstrip().startswith(("=","+","-","@")) else v for v in (row[k] for k in keys)])
+    else:
+        ws.append(["Нет записей"])
+    out=io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
