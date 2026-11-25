@@ -125,11 +125,10 @@ async def section_metrics(c,page):
         "learners": """SELECT count(*) AS total_learners,count(*) FILTER(WHERE last_active_at>=now()-interval '7 days') AS active_learners,
             count(*) FILTER(WHERE is_subscribed AND (subscription_until IS NULL OR subscription_until>now())) AS vip_learners,
             count(*) FILTER(WHERE registered_at>=now()-interval '7 days') AS new_learners FROM users""",
-        "reviews": """SELECT count(*) AS active_cards,count(*) FILTER(WHERE c.due<=now()) AS due_cards,
+        "reviews": f"""SELECT count(*) AS active_cards,count(*) FILTER(WHERE c.due<=now()) AS due_cards,
             count(*) FILTER(WHERE c.card IS NOT NULL) AS rated_cards,
             (SELECT count(*) FROM srs_reviews WHERE reviewed_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS reviewed_today
-            FROM srs_cards c JOIN families f ON f.id=c.family_id JOIN stage1_words w ON w.id=c.task_id
-            WHERE f.archived_at IS NULL AND w.archived_at IS NULL""",
+            {srs.BASE} WHERE {srs.ACCESS}""",
         "media": """SELECT (SELECT count(*) FROM audio_assets) AS audio_assets,
             (SELECT count(*) FROM image_assets) AS image_assets,
             (SELECT count(DISTINCT asset_id) FROM family_audio_versions) AS historical_audio_links,
@@ -170,32 +169,35 @@ async def page_data(page, offset, query, status="All", access="All", sort="updat
     async with pool.acquire() as c:
         metrics=await section_metrics(c,page)
         if page=="dashboard":
-            totals=await c.fetchrow("""SELECT
+            totals=await c.fetchrow(f"""SELECT
                 (SELECT count(*) FROM families WHERE archived_at IS NULL) published_groups,
                 (SELECT count(*) FROM families WHERE archived_at IS NOT NULL) archived_groups,
                 (SELECT count(*) FROM users WHERE last_active_at>=now()-interval '7 days') active_learners,
                 (SELECT count(*) FROM content_drafts WHERE deleted_at IS NULL AND published_at IS NULL)
                   +(SELECT count(*) FROM family_edit_drafts WHERE deleted_at IS NULL AND published_version IS NULL) drafts,
-                (SELECT count(*) FROM srs_cards c JOIN families f ON f.id=c.family_id JOIN stage1_words w ON w.id=c.task_id
-                 WHERE c.due<=now() AND f.archived_at IS NULL AND w.archived_at IS NULL) due_cards,
+                (SELECT count(*) {srs.BASE} WHERE c.due<=now() AND {srs.ACCESS}) due_cards,
                 (SELECT count(*) FROM audio_assets) audio_assets,(SELECT count(*) FROM image_assets) image_assets""")
-            activity=await c.fetch("""SELECT answered_at::date::text AS day,count(*) AS attempts,
+            activity=await c.fetch("""SELECT (answered_at AT TIME ZONE 'UTC')::date::text AS day,count(*) AS attempts,
                 count(DISTINCT user_id) AS learners FROM learner_answer_events
-                WHERE answered_at>=now()-interval '7 days' GROUP BY 1 ORDER BY 1""")
+                WHERE source='lesson' AND answered_at>=now()-interval '7 days' AND answered_at<=now()
+                GROUP BY 1 ORDER BY 1""")
             return {"metrics":dict(totals),"activity":[dict(r) for r in activity],"publishing":await publishing_activity(c)}
         if page=="groups":
-            rows=await c.fetch(f"""SELECT f.id,f.name,f.description,f.target,f.content_version,
+            rows=await c.fetch(f"""WITH selected AS (SELECT f.id,f.name,f.description,f.target,f.content_version,
                 CASE WHEN f.archived_at IS NULL THEN 'Published' ELSE 'Archived' END AS status,
                 (SELECT count(*) FROM stage1_words w WHERE w.family_id=f.id AND w.archived_at IS NULL) AS words,
-                (SELECT count(DISTINCT stage_num) FROM active_task_positions t WHERE t.family_idx=f.id) AS stages,
-                (SELECT count(*) FROM user_family_progress p WHERE p.family_idx=f.id) AS learners,
-                (SELECT max(created_at)::text FROM family_versions v WHERE v.family_id=f.id) AS updated_at
+                (SELECT max(created_at) FROM family_versions v WHERE v.family_id=f.id) AS updated_at
                 FROM families f WHERE ($1='' OR strpos(lower(concat_ws(' ',f.name,f.description)),lower($1))>0
                     OR EXISTS(SELECT 1 FROM stage1_words w WHERE w.family_id=f.id AND w.archived_at IS NULL
                        AND strpos(lower(concat_ws(' ',w.word,w.translation)),lower($1))>0))
                 AND ($3='All' OR ($3='Published' AND f.archived_at IS NULL) OR ($3='Archived' AND f.archived_at IS NOT NULL))
                 AND ($4='All' OR coalesce(f.target,'VIP+FREE')=$4)
-                ORDER BY {GROUP_SORT[sort]} LIMIT 51 OFFSET $2""",query,offset,status,access)
+                ORDER BY {GROUP_SORT[sort]} LIMIT 51 OFFSET $2)
+                SELECT f.id,f.name,f.description,f.target,f.content_version,f.status,f.words,
+                    (SELECT count(DISTINCT stage_num) FROM active_task_positions t WHERE t.family_idx=f.id) AS stages,
+                    (SELECT count(*) FROM user_family_progress p WHERE p.family_idx=f.id) AS learners,
+                    f.updated_at::text AS updated_at FROM selected f
+                ORDER BY {GROUP_SORT[sort]}""",query,offset,status,access)
             return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50,"metrics":metrics,"publishing":await publishing_activity(c)}
         elif page=="drafts":
             rows=await c.fetch("""SELECT * FROM (
@@ -208,18 +210,21 @@ async def page_data(page, offset, query, status="All", access="All", sort="updat
                  ) d WHERE ($1='' OR strpos(lower(draft_id),lower($1))>0)
                 AND ($3='All' OR status=$3) ORDER BY updated_at DESC,draft_id LIMIT 51 OFFSET $2""",query,offset,status)
         elif page=="learners":
-            rows=await c.fetch("""SELECT u.user_id::text AS user_id,u.username,u.first_name,u.last_name,
-                CASE WHEN u.is_subscribed AND (u.subscription_until IS NULL OR u.subscription_until>now()) THEN 'VIP' ELSE 'Free' END AS plan,
-                u.last_active_at::text AS last_active_at,u.subscription_until::text AS subscription_until,
-                (SELECT count(*) FROM srs_cards c WHERE c.user_id=u.user_id AND c.due<=now()) due_cards
+            rows=await c.fetch(f"""WITH selected AS (
+                SELECT u.user_id,u.username,u.first_name,u.last_name,
+                    CASE WHEN u.is_subscribed AND (u.subscription_until IS NULL OR u.subscription_until>now()) THEN 'VIP' ELSE 'Free' END AS plan,
+                    u.last_active_at,u.subscription_until
                 FROM users u WHERE ($1='' OR strpos(lower(concat_ws(' ',u.user_id::text,u.username,u.first_name,u.last_name)),lower($1))>0)
                 AND ($3='All' OR (CASE WHEN u.is_subscribed AND (u.subscription_until IS NULL OR u.subscription_until>now()) THEN 'VIP' ELSE 'Free' END)=$3)
-                ORDER BY last_active_at DESC NULLS LAST,u.user_id LIMIT 51 OFFSET $2""",query,offset,status)
+                ORDER BY u.last_active_at DESC NULLS LAST,u.user_id LIMIT 51 OFFSET $2
+            ) SELECT u.user_id::text AS user_id,u.username,u.first_name,u.last_name,u.plan,
+                u.last_active_at::text AS last_active_at,u.subscription_until::text AS subscription_until,
+                (SELECT count(*) {srs.BASE} WHERE c.user_id=u.user_id AND c.due<=now() AND {srs.ACCESS}) due_cards
+                FROM selected u ORDER BY u.last_active_at DESC NULLS LAST,u.user_id""",query,offset,status)
         elif page=="reviews":
-            rows=await c.fetch("""SELECT f.id,f.name,count(*) AS cards,count(*) FILTER(WHERE c.due<=now()) AS due,
+            rows=await c.fetch(f"""SELECT f.id,f.name,count(*) AS cards,count(*) FILTER(WHERE c.due<=now()) AS due,
                 count(*) FILTER(WHERE c.card IS NOT NULL) AS rated
-                FROM srs_cards c JOIN families f ON f.id=c.family_id JOIN stage1_words w ON w.id=c.task_id
-                WHERE f.archived_at IS NULL AND w.archived_at IS NULL AND ($1='' OR strpos(lower(f.name),lower($1))>0)
+                {srs.BASE} WHERE {srs.ACCESS} AND ($1='' OR strpos(lower(f.name),lower($1))>0)
                 GROUP BY f.id,f.name ORDER BY due DESC,f.id LIMIT 51 OFFSET $2""",query,offset)
         elif page=="budgets":
             rows=await c.fetch("""SELECT * FROM (
@@ -228,8 +233,11 @@ async def page_data(page, offset, query, status="All", access="All", sort="updat
                  ) r WHERE ($1='' OR strpos(lower(concat_ws(' ',service,provider,model,status)),lower($1))>0)
                 AND ($3='All' OR status=$3)
                 ORDER BY reserved_at DESC,service,provider,model LIMIT 51 OFFSET $2""",query,offset,status)
-            today=await c.fetch("""SELECT 'TTS' AS service,coalesce(sum(reserved_microusd),0)::bigint AS reserved FROM tts_requests WHERE reserved_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-              UNION ALL SELECT 'Images',coalesce(sum(reserved_microusd),0)::bigint FROM image_requests WHERE reserved_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'""")
+            today=await c.fetch("""WITH bounds AS (SELECT date_trunc('day',now() AT TIME ZONE 'UTC') AS day)
+                SELECT 'TTS' AS service,coalesce(sum(reserved_microusd),0)::bigint AS reserved FROM tts_requests,bounds
+                WHERE reserved_at>=day AT TIME ZONE 'UTC' AND reserved_at<(day+interval '1 day') AT TIME ZONE 'UTC'
+                UNION ALL SELECT 'Images',coalesce(sum(reserved_microusd),0)::bigint FROM image_requests,bounds
+                WHERE reserved_at>=day AT TIME ZONE 'UTC' AND reserved_at<(day+interval '1 day') AT TIME ZONE 'UTC'""")
             return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50,"metrics":{r["service"]:r["reserved"] for r in today},"limits":{"TTS":tts.daily_limit(),"Images":images.daily_limit()}}
         elif page=="settings":
             rows=await c.fetch("SELECT action,status,actor,actor_role,created_at::text AS created_at FROM web_admin_audit ORDER BY id DESC LIMIT 51 OFFSET $1",offset)

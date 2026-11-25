@@ -270,6 +270,11 @@ async def init_db_pg():
                 );
             ''')
 
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS users_admin_activity_idx ON users(last_active_at DESC NULLS LAST,user_id);
+                CREATE INDEX IF NOT EXISTS user_family_progress_family_idx ON user_family_progress(family_idx);
+                CREATE INDEX IF NOT EXISTS users_admin_registered_idx ON users(registered_at);
+            """)
             from tgteacher_bot.db.drafts_repo import init_drafts
             await init_drafts(conn)
             from tgteacher_bot.db.content_schema import migrate_content

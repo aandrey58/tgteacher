@@ -10,6 +10,7 @@ async def init_srs(conn):
             PRIMARY KEY(user_id,family_id,task_id)
         );
         CREATE INDEX IF NOT EXISTS srs_due_idx ON srs_cards(user_id,due);
+        CREATE INDEX IF NOT EXISTS srs_admin_due_idx ON srs_cards(due);
         CREATE TABLE IF NOT EXISTS srs_reviews (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL, family_id INTEGER NOT NULL,
             task_id INTEGER NOT NULL, reviewed_at TIMESTAMPTZ NOT NULL, rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 4),
@@ -17,6 +18,7 @@ async def init_srs(conn):
             FOREIGN KEY(user_id,family_id,task_id) REFERENCES srs_cards(user_id,family_id,task_id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS srs_reviews_user_idx ON srs_reviews(user_id,reviewed_at);
+        CREATE INDEX IF NOT EXISTS srs_reviews_time_idx ON srs_reviews(reviewed_at);
         CREATE TABLE IF NOT EXISTS learner_answer_events (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL, family_id INTEGER NOT NULL,
             stage_num INTEGER NOT NULL, task_id INTEGER NOT NULL, answered_at TIMESTAMPTZ,
@@ -24,6 +26,7 @@ async def init_srs(conn):
             CHECK(is_correct IN (0,1))
         );
         CREATE INDEX IF NOT EXISTS learner_answer_events_user_idx ON learner_answer_events(user_id,answered_at);
+        CREATE INDEX IF NOT EXISTS learner_answer_events_lesson_time_idx ON learner_answer_events(answered_at) WHERE source='lesson';
         CREATE TABLE IF NOT EXISTS srs_review_tickets (
             nonce UUID PRIMARY KEY, user_id BIGINT NOT NULL, family_id INTEGER NOT NULL, task_id INTEGER NOT NULL,
             card_revision INTEGER NOT NULL, family_version INTEGER NOT NULL,
