@@ -1,10 +1,13 @@
 """Same-origin web admin; independent from MCP and learner credentials."""
+import asyncio
 import hashlib
 import hmac
 import json
 import os
 import re
 import secrets
+import time
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -19,7 +22,7 @@ from tgteacher_bot.db import drafts_repo as drafts, content_versions as versions
 from tgteacher_bot.db import tts_repo as tts, image_repo as images, media_repo as media, user_repo as users, srs_repo as srs
 from tgteacher_bot.db.pool import get_pool
 
-from tgteacher_bot.db import web_operations as ops
+from tgteacher_bot.db import web_operations as ops, web_identity as identity
 from tgteacher_bot.services.exports import web_transfer as transfer
 
 COOKIE = "tgteacher_admin"
@@ -83,6 +86,7 @@ async def init_web(conn):
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
     """)
+    await identity.initialize(conn)
 
 
 def reply(value, status=200):
@@ -228,8 +232,8 @@ async def page_data(page, offset, query, status="All", access="All", sort="updat
               UNION ALL SELECT 'Images',coalesce(sum(reserved_microusd),0)::bigint FROM image_requests WHERE reserved_at>=date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'""")
             return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50,"metrics":{r["service"]:r["reserved"] for r in today},"limits":{"TTS":tts.daily_limit(),"Images":images.daily_limit()}}
         elif page=="settings":
-            rows=await c.fetch("SELECT action,status,created_at::text AS created_at FROM web_admin_audit ORDER BY id DESC LIMIT 50")
-            return {"items":[dict(r) for r in rows],"metrics":{"MCP tools":45,"Web access":"Single operator","Database":"Connected"}}
+            rows=await c.fetch("SELECT action,status,actor,actor_role,created_at::text AS created_at FROM web_admin_audit ORDER BY id DESC LIMIT 51 OFFSET $1",offset)
+            return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50,"metrics":{"MCP tools":45,"Web access":"Role-based","Database":"Connected"}}
         else:
             rows=None
     if rows is not None:
@@ -248,7 +252,7 @@ async def page_data(page, offset, query, status="All", access="All", sort="updat
             "models":tts.list_providers()["providers"] if page=="tts" else images.model_profiles() if page=="images" else []}
 
 
-def build_app(secret, origin, static_dir=None, initialize=True):
+def build_app(secret, origin, static_dir=None, initialize=True, allow_recovery=True):
     if not secret.isascii() or len(secret)<32:
         raise ValueError("Set a unique random WEB_ADMIN_SECRET of at least 32 characters")
     parsed=urlsplit(origin)
@@ -256,52 +260,118 @@ def build_app(secret, origin, static_dir=None, initialize=True):
         raise ValueError("WEB_ADMIN_ORIGIN must be HTTPS or local HTTP origin")
     credential=digest(secret)
 
+    attempts=deque()
+    hash_slots=asyncio.Semaphore(4)
+
+    async def audit(actor,action,status):
+        pool=await get_pool()
+        async with pool.acquire() as c:
+            await c.execute("INSERT INTO web_admin_audit(action,status,actor,actor_role) VALUES($1,$2,$3,$4)",
+                            action,status,actor["username"] if actor else None,actor["role"] if actor else None)
+
+    def public_actor(actor):
+        return {"authenticated":True,"username":actor["username"],"role":actor["role"],"recovery":actor["id"] is None}
+
     async def authorized(request):
         token=request.cookies.get(COOKIE,"")
         if not re.fullmatch(r"[A-Za-z0-9_-]{43}",token):
-            return False
+            return None
         pool=await get_pool()
         async with pool.acquire() as c:
-            return bool(await c.fetchval("SELECT 1 FROM web_admin_sessions WHERE token_hash=$1 AND credential_hash=$2 AND expires_at>now()",digest(token),credential))
+            row=await c.fetchrow("""SELECT s.account_id AS id,s.account_revision AS revision,a.username,a.role
+                FROM web_admin_sessions s LEFT JOIN web_admin_accounts a ON a.id=s.account_id
+                WHERE s.token_hash=$1 AND s.expires_at>now()
+                AND ((s.account_id IS NULL AND $3 AND s.credential_hash=$2 AND s.account_revision=0)
+                  OR (s.account_id IS NOT NULL AND a.enabled AND a.revision=s.account_revision))""",
+                digest(token),credential,allow_recovery)
+        if not row:
+            return None
+        if row["id"] is None:
+            return {"id":None,"revision":0,"username":"recovery","role":"owner"}
+        return dict(row)
 
     async def login(request):
         if request.headers.get("origin")!=origin:
             return reply({"error":"Запрос с постороннего сайта отклонён"},403)
+        now=time.monotonic()
+        while attempts and attempts[0]<=now-60:
+            attempts.popleft()
+        if len(attempts)>=120:
+            return reply({"error":"Слишком много попыток входа"},429)
+        attempts.append(now)
         data=await body(request)
         key=data.get("secret")
-        if not isinstance(key,str) or not key.isascii() or not hmac.compare_digest(key,secret):
-            return reply({"error":"Неверный ключ администратора"},401)
+        username=data.get("username")
         token=secrets.token_urlsafe(32)
-        pool=await get_pool()
-        async with pool.acquire() as c:
-            await c.execute("DELETE FROM web_admin_sessions WHERE expires_at<=now() OR credential_hash<>$1",credential)
-            await c.execute("INSERT INTO web_admin_sessions VALUES($1,$2,now()+interval '8 hours')",digest(token),credential)
-        response=reply({"authenticated":True})
+        if username in (None,""):
+            if not allow_recovery or not isinstance(key,str) or len(key)>1024 or not key.isascii() or not hmac.compare_digest(key,secret):
+                return reply({"error":"Неверные данные входа"},401)
+            actor={"id":None,"revision":0,"username":"recovery","role":"owner"}
+            pool=await get_pool()
+            async with pool.acquire() as c:
+                async with c.transaction():
+                    await c.execute("DELETE FROM web_admin_sessions WHERE expires_at<=now() OR (account_id IS NULL AND (credential_hash<>$1 OR account_revision IS DISTINCT FROM 0))",credential)
+                    await c.execute("""INSERT INTO web_admin_sessions(token_hash,credential_hash,expires_at,account_revision)
+                        VALUES($1,$2,now()+interval '8 hours',0)""",digest(token),credential)
+        else:
+            try:
+                username=identity.valid_username(username)
+            except ValueError:
+                return reply({"error":"Неверные данные входа"},401)
+            pool=await get_pool()
+            async with pool.acquire() as c:
+                row=await c.fetchrow("SELECT id,username,role,enabled,revision,password_hash FROM web_admin_accounts WHERE username=$1",username)
+            async with hash_slots:
+                verified=await asyncio.to_thread(identity.verify_password,key,row["password_hash"] if row else identity.DUMMY_HASH)
+            if not row or not row["enabled"] or not verified:
+                await audit(None,"login","failed")
+                return reply({"error":"Неверные данные входа"},401)
+            async with pool.acquire() as c:
+                async with c.transaction():
+                    locked=await c.fetchrow("SELECT enabled,revision FROM web_admin_accounts WHERE id=$1 FOR UPDATE",row["id"])
+                    if not locked or not locked["enabled"] or locked["revision"]!=row["revision"]:
+                        return reply({"error":"Неверные данные входа"},401)
+                    await c.execute("DELETE FROM web_admin_sessions WHERE expires_at<=now()")
+                    await c.execute("""INSERT INTO web_admin_sessions(token_hash,credential_hash,expires_at,account_id,account_revision)
+                        VALUES($1,$2,now()+interval '8 hours',$3,$4)""",digest(token),"account",row["id"],row["revision"])
+            actor={"id":row["id"],"revision":row["revision"],"username":row["username"],"role":row["role"]}
+        await audit(actor,"login","ok")
+        response=reply(public_actor(actor))
         response.set_cookie(COOKIE,token,max_age=28800,httponly=True,secure=parsed.scheme=="https",samesite="strict",path="/")
         return response
+
+    async def denied(actor,name):
+        await audit(actor,name,"denied")
+        return reply({"error":"Недостаточно прав для операции"},403)
 
     async def api(request):
         if request.method=="POST" and request.headers.get("origin")!=origin:
             return reply({"error":"Запрос с постороннего сайта отклонён"},403)
-        if not await authorized(request):
+        actor=await authorized(request)
+        if not actor:
             return reply({"error":"Необходимо войти"},401)
         route=request.path_params["route"]
         if route=="session" and request.method=="GET":
-            return reply({"authenticated":True})
+            return reply(public_actor(actor))
         if route=="logout" and request.method=="POST":
             pool=await get_pool()
             async with pool.acquire() as c:
                 await c.execute("DELETE FROM web_admin_sessions WHERE token_hash=$1",digest(request.cookies[COOKIE]))
+            await audit(actor,"logout","ok")
             response=reply({"authenticated":False})
             response.delete_cookie(COOKIE,path="/")
             return response
         if request.method=="GET" and route in PAGES:
+            if not identity.page_allowed(actor["role"],route):
+                return await denied(actor,"page:"+route)
             offset=int(request.query_params.get("offset",0))
             query=request.query_params.get("q","")
             if not 0<=offset<=1000000 or len(query)>200:
                 raise ValueError("Invalid search or pagination")
             return reply(await page_data(route,offset,query,request.query_params.get("status","All"),
                 request.query_params.get("access","All"),request.query_params.get("sort","updated")))
+        if route not in ("action","session","logout") and not identity.route_allowed(actor["role"],route):
+            return await denied(actor,"route:"+route if route in ("export_zip","export_report","template","import_zip","upload_media","upload_attachment","asset") else "unknown_route")
         if request.method=="GET" and route in ("export_zip","export_report","template"):
             if route=="export_zip":
                 ident=int(request.query_params["family_id"])
@@ -321,6 +391,7 @@ def build_app(secret, origin, static_dir=None, initialize=True):
                 data=await asyncio.to_thread(ops.workbook,rows)
                 name="report.xlsx"
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            await audit(actor,route,"ok")
             return Response(data,media_type=mime,headers={"Content-Disposition":f'attachment; filename="{name}"',"Cache-Control":"no-store"})
         if request.method=="POST" and route in ("import_zip","upload_media","upload_attachment"):
             if request.headers.get("x-confirm")!="true":
@@ -337,9 +408,7 @@ def build_app(secret, origin, static_dir=None, initialize=True):
                 status="ok"
                 return reply(result)
             finally:
-                pool=await get_pool()
-                async with pool.acquire() as c:
-                    await c.execute("INSERT INTO web_admin_audit(action,status) VALUES($1,$2)",route,status)
+                await audit(actor,route,status)
         if request.method=="GET" and route=="asset":
             kind=request.query_params.get("kind")
             ident=request.query_params.get("id")
@@ -355,9 +424,29 @@ def build_app(secret, origin, static_dir=None, initialize=True):
         name,args=data.get("action"),data.get("args",{})
         if not isinstance(name,str) or not isinstance(args,dict):
             raise ValueError("Invalid action")
+        known=name in READ or name in WRITE or name in ("generate_audio","generate_image","estimate_image","accounts","create_account","update_account","change_own_password")
+        if not known:
+            return reply({"error":"Неизвестное действие"},404)
+        if not identity.action_allowed(actor["role"],name):
+            return await denied(actor,name)
+        if actor["role"]=="support":
+            if name=="create_campaign" and args.get("target")!="support":
+                return await denied(actor,name)
+            if name in ("confirm_campaign","cancel_campaign"):
+                import uuid
+                ident=uuid.UUID(args.get("campaign_id",""))
+                pool=await get_pool()
+                async with pool.acquire() as c:
+                    target=await c.fetchval("SELECT target FROM web_campaigns WHERE id=$1",ident)
+                if target!="support":
+                    return await denied(actor,name)
+            if name=="campaigns":
+                args={**args,"support_only":True}
+        if name=="accounts":
+            return reply(await identity.accounts(await get_pool(),**args))
         if name in READ:
             return reply(await READ[name](**args))
-        if name not in WRITE and name not in ("generate_audio","generate_image","estimate_image"):
+        if name not in WRITE and name not in ("generate_audio","generate_image","estimate_image","create_account","update_account","change_own_password"):
             return reply({"error":"Неизвестное действие"},404)
         if name!="estimate_image" and data.get("confirm") is not True:
             raise ValueError("Confirmation required")
@@ -371,15 +460,19 @@ def build_app(secret, origin, static_dir=None, initialize=True):
                 result=await images.generate_batch(args["items"],args["max_cost_microusd"],False)
             elif name=="generate_audio":
                 result=await tts.generate_batch(args["items"],args["max_cost_microusd"])
+            elif name=="create_account":
+                result=await identity.create(await get_pool(),**args)
+            elif name=="update_account":
+                result=await identity.update(await get_pool(),**args)
+            elif name=="change_own_password":
+                result=await identity.own_password(await get_pool(),actor,**args)
             else:
                 result=await WRITE[name](**args)
             status="ok"
             return reply(result)
         finally:
             if name!="estimate_image":
-                pool=await get_pool()
-                async with pool.acquire() as c:
-                    await c.execute("INSERT INTO web_admin_audit(action,status) VALUES($1,$2)",name,status)
+                await audit(actor,name,status)
 
     async def safe(request):
         try:
@@ -398,6 +491,8 @@ def build_app(secret, origin, static_dir=None, initialize=True):
                 async with c.transaction():
                     await c.execute("SELECT pg_advisory_xact_lock(847231,8)")
                     await init_web(c)
+                    if not allow_recovery and not await c.fetchval("SELECT 1 FROM web_admin_accounts WHERE role='owner' AND enabled LIMIT 1"):
+                        raise RuntimeError("Create an enabled owner before disabling recovery")
         yield
 
     routes=[Route("/api/login",safe,methods=["POST"]),Route("/api/{route}",safe,methods=["GET","POST"])]
@@ -416,7 +511,7 @@ def build_app(secret, origin, static_dir=None, initialize=True):
 
 def main():
     import uvicorn
-    uvicorn.run(build_app(os.environ["WEB_ADMIN_SECRET"],os.environ["WEB_ADMIN_ORIGIN"],Path("/app/admin-dist")),host="0.0.0.0",port=8080,proxy_headers=False)
+    uvicorn.run(build_app(os.environ["WEB_ADMIN_SECRET"],os.environ["WEB_ADMIN_ORIGIN"],Path("/app/admin-dist"),allow_recovery=os.getenv("WEB_ADMIN_ALLOW_RECOVERY","1")=="1"),host="0.0.0.0",port=8080,proxy_headers=False)
 
 
 if __name__=="__main__":

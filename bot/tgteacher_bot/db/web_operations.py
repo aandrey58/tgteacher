@@ -309,8 +309,8 @@ async def cancel_campaign(campaign_id):
     return {"ok":True}
 
 
-async def campaigns(offset=0):
-    if type(offset) is not int or not 0<=offset<=100000:
+async def campaigns(offset=0,support_only=False):
+    if type(offset) is not int or not 0<=offset<=100000 or type(support_only) is not bool:
         raise ValueError("Invalid offset")
     pool=await get_pool()
     async with pool.acquire() as c:
@@ -319,7 +319,7 @@ async def campaigns(offset=0):
             count(*) FILTER(WHERE d.status='pending') AS pending,count(*) FILTER(WHERE d.status='sending') AS sending,
             count(*) FILTER(WHERE d.status='failed') AS failed,count(*) FILTER(WHERE d.status='uncertain') AS uncertain,
             count(*) FILTER(WHERE d.status='cancelled') AS cancelled
-            FROM web_campaigns w LEFT JOIN web_deliveries d ON d.campaign_id=w.id GROUP BY w.id ORDER BY w.created_at DESC LIMIT 51 OFFSET $1""",offset)
+            FROM web_campaigns w LEFT JOIN web_deliveries d ON d.campaign_id=w.id WHERE (NOT $2::boolean OR w.target='support') GROUP BY w.id ORDER BY w.created_at DESC LIMIT 51 OFFSET $1""",offset,support_only)
     return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50}
 
 

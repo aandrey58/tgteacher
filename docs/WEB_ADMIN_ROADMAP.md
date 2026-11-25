@@ -59,7 +59,7 @@ Back up the legacy JSON index and database, stop legacy group replies and ensure
 
 ## Phase 9.5 — security and reliability
 
-Add per-administrator identity/roles and richer audit attribution; migrate settings safely rather than editing arbitrary environment secrets from the browser. Review authorization, concurrency, budgets and performance. Use actual measured analytics, explicitly distinguish forecast and self-assessment.
+Individual web accounts and server-enforced owner/editor/support roles. Passwords use salted PBKDF2-SHA256 (600,000 iterations), minimum 16 characters; account changes revoke sessions, revision checks prevent stale edits, and the last enabled owner cannot be disabled or demoted. Existing shared-key sessions are invalidated at migration. Sign in with the existing key (blank login), create and test a personal owner in Settings, then optionally set WEB_ADMIN_ALLOW_RECOVERY=0 and restart admin. A startup guard requires an enabled owner. Keep the recovery key on the server. Require HTTPS and reverse-proxy login throttling in production; the app also applies a process-local 120/min login limit. Owner manages all sections; editor manages content/media/budgets and sees aggregate learning stats, not learner records or settings; support sees questions and support replies only, with media selection, not global broadcasts. The audit records actor/role, login/logout and denied operations without storing passwords. Review concurrency, budgets, performance, and measured analytics before closing the phase.
 
 ## Phase 9.6 — acceptance and cutover
 

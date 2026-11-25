@@ -21,6 +21,11 @@ ORIGIN="http://localhost:8080"
 
 
 class WebSecurityTests(unittest.TestCase):
+    def test_recovery_can_be_disabled(self):
+        app=web_admin.build_app(SECRET,ORIGIN,initialize=False,allow_recovery=False)
+        with TestClient(app,base_url=ORIGIN) as client:
+            self.assertEqual(client.post("/api/login",json={"secret":SECRET},headers={"Origin":ORIGIN}).status_code,401)
+
     def test_fail_closed_configuration(self):
         for secret,origin in (("short",ORIGIN),(SECRET,"http://example.com"),(SECRET,"https://example.com/path")):
             with self.assertRaises(ValueError):
@@ -215,6 +220,57 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertEqual(action("reports",{"kind":"new","start_date":"2020-01-01","end_date":"2020-01-02"}).json(),[])
                     self.assertEqual(action("reports",{"kind":"new","start_date":"2020-02-01","end_date":"2020-01-01"}).status_code,400)
                     self.assertEqual(action("arbitrary",{},True).status_code,404)
+                    # Individual identities, role checks, and session revocation.
+                    password="test-only-password-12345"
+                    def login_as(username=None,secret=password):
+                        client.cookies.clear()
+                        return client.post("/api/login",json={"username":username,"secret":secret},headers=headers)
+                    def create_account(username,role):
+                        response=action("create_account",{"username":username,"password":password,"role":role},True)
+                        self.assertEqual(response.status_code,200,response.text)
+                        self.assertNotIn("password_hash",response.json())
+                        return response.json()
+                    self.assertEqual(action("create_account",{"username":"invalid","password":"short","role":"owner"},True).status_code,400)
+                    owner=create_account("first-owner","owner")
+                    editor=create_account("content-editor","editor")
+                    support=create_account("support-agent","support")
+                    self.assertEqual(action("create_account",{"username":"CONTENT-EDITOR","password":password,"role":"owner"},True).status_code,400)
+                    self.assertEqual(action("update_account",{"account_id":owner["id"],"expected_revision":owner["revision"],"role":"editor","enabled":True},True).status_code,400)
+                    self.assertEqual(login_as("content-editor","wrong-password").status_code,401)
+                    self.assertEqual(login_as("CONTENT-EDITOR").json()["role"],"editor")
+                    editor_cookie=client.cookies.get(web_admin.COOKIE)
+                    self.assertEqual(client.get("/api/session").json()["username"],"content-editor")
+                    self.assertEqual(client.get("/api/groups").status_code,200)
+                    self.assertEqual(client.get("/api/learners").status_code,403)
+                    self.assertEqual(client.get("/api/settings").status_code,403)
+                    self.assertEqual(client.get("/api/export_report?kind=learners").status_code,403)
+                    self.assertEqual(action("accounts",{}).status_code,403)
+                    self.assertEqual(action("subscription",gift,True).status_code,403)
+                    self.assertEqual(action("create_draft",{"draft_id":str(uuid.uuid4()),"source":'#FAMILY "Editor role"\\n#WORD ticket\\n#TRANSLATION билет\\n'},True).status_code,200)
+                    self.assertEqual(login_as("support-agent").json()["role"],"support")
+                    self.assertEqual(client.get("/api/images").status_code,200)
+                    self.assertEqual(client.get("/api/groups").status_code,403)
+                    self.assertEqual(action("support",{}).status_code,200)
+                    self.assertTrue(all(r["target"]=="support" for r in action("campaigns",{}).json()["items"]))
+                    self.assertEqual(action("create_campaign",{"campaign_id":str(uuid.uuid4()),"target":"all","text":"Denied"},True).status_code,403)
+                    self.assertEqual(action("confirm_campaign",{"campaign_id":cid3,"expected_count":1},True).status_code,403)
+                    self.assertEqual(action("cancel_campaign",{"campaign_id":cid3},True).status_code,403)
+                    self.assertEqual(action("set_tariff",{"months":3,"amount":10},True).status_code,403)
+                    self.assertEqual(action("change_own_password",{"current_password":password,"new_password":"new-test-password-12345"},True).status_code,200)
+                    self.assertEqual(client.get("/api/session").status_code,401)
+                    self.assertEqual(login_as("support-agent",password).status_code,401)
+                    self.assertEqual(login_as("support-agent","new-test-password-12345").status_code,200)
+                    self.assertEqual(login_as("first-owner").json()["role"],"owner")
+                    audit=client.get("/api/settings").json()["items"]
+                    self.assertTrue(any(x["actor"]=="content-editor" and x["status"]=="denied" for x in audit))
+                    self.assertTrue(any(x["actor"]=="support-agent" and x["action"]=="change_own_password" for x in audit))
+                    self.assertEqual(action("update_account",{"account_id":editor["id"],"expected_revision":editor["revision"],"role":"editor","enabled":False},True).status_code,200)
+                    self.assertEqual(action("update_account",{"account_id":editor["id"],"expected_revision":editor["revision"],"role":"owner","enabled":True},True).status_code,400)
+                    client.cookies.clear()
+                    client.cookies.set(web_admin.COOKIE,editor_cookie)
+                    self.assertEqual(client.get("/api/session").status_code,401)
+                    self.assertEqual(login_as("content-editor").status_code,401)
+                    self.assertEqual(login_as("first-owner").status_code,200)
                     cookie=client.cookies.get(web_admin.COOKIE)
                     self.assertEqual(client.post("/api/logout",json={},headers=headers).status_code,200)
                     client.cookies.set(web_admin.COOKIE,cookie)
