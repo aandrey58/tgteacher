@@ -1,0 +1,258 @@
+"""Web operator actions and persistent Telegram delivery queue.
+
+The polling bot owns Telegram credentials. HTTP handlers only enqueue messages.
+Uncertain sends are never automatically repeated.
+"""
+import asyncio
+import io
+import uuid
+from datetime import datetime
+from tgteacher_bot.db.pool import get_pool
+
+VIP = "is_subscribed IS TRUE AND (subscription_until IS NULL OR subscription_until>now())"
+TARGETS = {"all":"TRUE","subs":VIP,"nosubs":f"NOT coalesce(({VIP}),false)"}
+
+
+async def init_operations(c):
+    await c.execute("""
+        CREATE TABLE IF NOT EXISTS web_support (
+            id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            question TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','queued','answered','closed')),
+            answer TEXT
+        );
+        CREATE TABLE IF NOT EXISTS web_campaigns (
+            id UUID PRIMARY KEY, target TEXT NOT NULL, body TEXT NOT NULL,
+            photo_id TEXT REFERENCES image_assets(asset_id), support_id BIGINT REFERENCES web_support(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','queued','cancelled')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS web_deliveries (
+            campaign_id UUID NOT NULL REFERENCES web_campaigns(id) ON DELETE CASCADE,
+            user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sending','sent','failed','uncertain','cancelled')),
+            changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY(campaign_id,user_id)
+        );
+        CREATE INDEX IF NOT EXISTS web_pending_delivery_idx ON web_deliveries(status,changed_at);
+    """)
+
+
+def ids(value):
+    if not isinstance(value,list) or not 1<=len(value)<=100 or any(type(i) is not int or not 0<i<2**53 for i in value) or len(set(value))!=len(value):
+        raise ValueError("Invalid selection")
+    return sorted(value)
+
+
+async def bulk_archive(family_ids, archived):
+    selected=ids(family_ids)
+    if type(archived) is not bool:
+        raise ValueError("Invalid archive state")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        async with c.transaction():
+            await c.execute("SELECT pg_advisory_xact_lock(847231,1)")
+            rows=await c.fetch("""UPDATE families SET archived_at=CASE WHEN $2 THEN coalesce(archived_at,now()) ELSE NULL END
+                WHERE id=ANY($1::int[]) RETURNING id""",selected,archived)
+            if len(rows)!=len(selected):
+                raise ValueError("Group not found")
+    return {"count":len(rows)}
+
+
+async def subscription(user_ids, months=None, revoke=False):
+    selected=ids(user_ids)
+    if type(revoke) is not bool or (not revoke and (type(months) is not int or not 1<=months<=12)) or (revoke and months is not None):
+        raise ValueError("Invalid subscription change")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        async with c.transaction():
+            if revoke:
+                rows=await c.fetch("UPDATE users SET is_subscribed=false,subscription_until=NULL WHERE user_id=ANY($1::bigint[]) RETURNING user_id",selected)
+            else:
+                rows=await c.fetch("""UPDATE users SET is_subscribed=true,
+                    subscription_until=greatest(now(),coalesce(subscription_until,now()))+make_interval(days=>30*$2::int),
+                    subscription_count=coalesce(subscription_count,0)+$2 WHERE user_id=ANY($1::bigint[]) RETURNING user_id""",selected,months)
+            if len(rows)!=len(selected):
+                raise ValueError("Learner not found")
+    return {"count":len(rows)}
+
+
+async def set_tariff(months, amount=None, remove=False):
+    if type(months) is not int or not 1<=months<=36 or type(remove) is not bool:
+        raise ValueError("Invalid tariff")
+    if not remove and (type(amount) is not int or not 1<=amount<=1000000):
+        raise ValueError("Invalid amount in RUB")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        if remove:
+            await c.execute("DELETE FROM payment_options WHERE months=$1",months)
+        else:
+            await c.execute("""INSERT INTO payment_options(months,amount) VALUES($1,$2)
+                ON CONFLICT(months) DO UPDATE SET amount=excluded.amount""",months,amount)
+    return {"ok":True}
+
+
+async def tariffs():
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        return [dict(r) for r in await c.fetch("SELECT months,amount FROM payment_options ORDER BY months")]
+
+
+async def create_question(user_id, question):
+    if not isinstance(question,str) or not 1<=len(question.strip())<=4096:
+        raise ValueError("Invalid question")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        return await c.fetchval("INSERT INTO web_support(user_id,question) VALUES($1,$2) RETURNING id",user_id,question.strip())
+
+
+async def support_list(offset=0):
+    if type(offset) is not int or not 0<=offset<=100000:
+        raise ValueError("Invalid offset")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        rows=await c.fetch("""SELECT s.id,s.user_id::text AS user_id,s.question,s.answer,s.status,s.created_at::text AS created_at,u.first_name,u.username
+            FROM web_support s JOIN users u USING(user_id) ORDER BY (s.status='open') DESC,s.id DESC LIMIT 51 OFFSET $1""",offset)
+    return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50}
+
+
+async def close_question(question_id):
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        result=await c.execute("UPDATE web_support SET status='closed' WHERE id=$1 AND status IN ('open','answered')",question_id)
+        if result!="UPDATE 1":
+            raise ValueError("Question unavailable")
+    return {"ok":True}
+
+
+async def create_campaign(campaign_id, target, text, user_ids=None, photo_id=None, question_id=None):
+    ident=uuid.UUID(campaign_id)
+    if not isinstance(text,str) or not 1<=len(text.strip())<=(1024 if photo_id else 4000):
+        raise ValueError("Invalid message length")
+    if target not in (*TARGETS,"selected","support"):
+        raise ValueError("Invalid recipient target")
+    if target=="selected":
+        selected=ids(user_ids)
+    elif user_ids is not None:
+        raise ValueError("Unexpected recipient selection")
+    if (target=="support")!=(question_id is not None):
+        raise ValueError("Invalid support reference")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        async with c.transaction():
+            if await c.fetchval("SELECT 1 FROM web_campaigns WHERE id=$1",ident):
+                raise ValueError("Campaign ID already used")
+            if photo_id and not await c.fetchval("SELECT 1 FROM image_assets WHERE asset_id=$1",photo_id):
+                raise ValueError("Unknown image")
+            if target=="support":
+                q=await c.fetchrow("SELECT user_id,status FROM web_support WHERE id=$1 FOR UPDATE",question_id)
+                if not q or q["status"]!="open":
+                    raise ValueError("Question not open")
+                selected=[q["user_id"]]
+            await c.execute("INSERT INTO web_campaigns(id,target,body,photo_id,support_id) VALUES($1,$2,$3,$4,$5)",ident,target,text.strip(),photo_id,question_id)
+            if target in TARGETS:
+                await c.execute(f"INSERT INTO web_deliveries(campaign_id,user_id) SELECT $1,user_id FROM users WHERE {TARGETS[target]}",ident)
+            else:
+                await c.execute("INSERT INTO web_deliveries(campaign_id,user_id) SELECT $1,user_id FROM users WHERE user_id=ANY($2::bigint[])",ident,selected)
+            count=await c.fetchval("SELECT count(*) FROM web_deliveries WHERE campaign_id=$1",ident)
+            if not count or (target in ("selected","support") and count!=len(selected)):
+                raise ValueError("No recipients or unknown learner")
+    return {"id":str(ident),"recipients":count,"status":"draft"}
+
+
+async def confirm_campaign(campaign_id, expected_count):
+    if type(expected_count) is not int or expected_count<1:
+        raise ValueError("Invalid recipient count")
+    ident=uuid.UUID(campaign_id)
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        async with c.transaction():
+            row=await c.fetchrow("SELECT * FROM web_campaigns WHERE id=$1 FOR UPDATE",ident)
+            if not row or row["status"]!="draft":
+                raise ValueError("Campaign already confirmed or cancelled")
+            count=await c.fetchval("SELECT count(*) FROM web_deliveries WHERE campaign_id=$1",ident)
+            if count!=expected_count:
+                raise ValueError("Recipient count changed")
+            if row["support_id"] is not None:
+                result=await c.execute("UPDATE web_support SET status='queued',answer=$2 WHERE id=$1 AND status='open'",row["support_id"],row["body"])
+                if result!="UPDATE 1":
+                    raise ValueError("Question already answered or queued")
+            await c.execute("UPDATE web_campaigns SET status='queued' WHERE id=$1",ident)
+    return {"id":str(ident),"recipients":count,"status":"queued"}
+
+
+async def cancel_campaign(campaign_id):
+    ident=uuid.UUID(campaign_id)
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        async with c.transaction():
+            row=await c.fetchrow("SELECT * FROM web_campaigns WHERE id=$1 FOR UPDATE",ident)
+            if not row or row["status"]=="cancelled":
+                raise ValueError("Campaign unavailable")
+            if row["support_id"] and await c.fetchval("SELECT 1 FROM web_deliveries WHERE campaign_id=$1 AND status IN ('sending','sent','uncertain')",ident):
+                raise ValueError("Answer already dispatched or uncertain")
+            await c.execute("UPDATE web_campaigns SET status='cancelled' WHERE id=$1",ident)
+            await c.execute("UPDATE web_deliveries SET status='cancelled',changed_at=now() WHERE campaign_id=$1 AND status='pending'",ident)
+            if row["support_id"] and row["status"]=="queued":
+                await c.execute("UPDATE web_support SET status='open',answer=NULL WHERE id=$1 AND status='queued'",row["support_id"])
+    return {"ok":True}
+
+
+async def campaigns(offset=0):
+    if type(offset) is not int or not 0<=offset<=100000:
+        raise ValueError("Invalid offset")
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        rows=await c.fetch("""SELECT w.id::text AS id,w.target,w.body,w.status,w.created_at::text AS created_at,
+            count(d.user_id) AS recipients,count(*) FILTER(WHERE d.status='sent') AS sent,
+            count(*) FILTER(WHERE d.status='pending') AS pending,count(*) FILTER(WHERE d.status='sending') AS sending,
+            count(*) FILTER(WHERE d.status='failed') AS failed,count(*) FILTER(WHERE d.status='uncertain') AS uncertain,
+            count(*) FILTER(WHERE d.status='cancelled') AS cancelled
+            FROM web_campaigns w LEFT JOIN web_deliveries d ON d.campaign_id=w.id GROUP BY w.id ORDER BY w.created_at DESC LIMIT 51 OFFSET $1""",offset)
+    return {"items":[dict(r) for r in rows[:50]],"next":len(rows)>50}
+
+
+async def deliver_one(bot):
+    from telegram.error import Forbidden, BadRequest, RetryAfter
+    pool=await get_pool()
+    async with pool.acquire() as c:
+        async with c.transaction():
+            # A process that died after claiming a message might have sent it.
+            await c.execute("UPDATE web_deliveries SET status='uncertain' WHERE status='sending' AND changed_at<now()-interval '10 minutes'")
+            row=await c.fetchrow("""SELECT d.campaign_id,d.user_id,w.body,w.photo_id,w.support_id
+                FROM web_deliveries d JOIN web_campaigns w ON w.id=d.campaign_id
+                WHERE d.status='pending' AND w.status='queued'
+                ORDER BY d.changed_at,d.campaign_id,d.user_id LIMIT 1 FOR UPDATE OF d,w SKIP LOCKED""")
+            if not row:
+                return False
+            await c.execute("UPDATE web_deliveries SET status='sending',changed_at=now() WHERE campaign_id=$1 AND user_id=$2",row["campaign_id"],row["user_id"])
+            photo=await c.fetchval("SELECT jpeg FROM image_assets WHERE asset_id=$1",row["photo_id"]) if row["photo_id"] else None
+    status="uncertain"
+    try:
+        if photo:
+            await asyncio.wait_for(bot.send_photo(chat_id=row["user_id"],photo=io.BytesIO(photo),caption=row["body"]),40)
+        else:
+            await asyncio.wait_for(bot.send_message(chat_id=row["user_id"],text=row["body"]),40)
+        status="sent"
+    except (Forbidden,BadRequest):
+        status="failed"
+    except RetryAfter:
+        status="failed"  # explicit rejection; operator decides whether to send a new campaign
+    except Exception:
+        pass
+    async with pool.acquire() as c:
+        async with c.transaction():
+            await c.execute("UPDATE web_deliveries SET status=$3,changed_at=now() WHERE campaign_id=$1 AND user_id=$2 AND status='sending'",row["campaign_id"],row["user_id"],status)
+            if row["support_id"] is not None:
+                if status=="sent":
+                    await c.execute("UPDATE web_support SET status='answered' WHERE id=$1 AND status='queued'",row["support_id"])
+                elif status=="failed":
+                    await c.execute("UPDATE web_support SET status='open' WHERE id=$1 AND status='queued'",row["support_id"])
+    return True
+
+
+async def delivery_job(context):
+    for _ in range(10):
+        if not await deliver_one(context.bot):
+            break
+        await asyncio.sleep(0.25)
