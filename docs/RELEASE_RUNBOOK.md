@@ -4,6 +4,10 @@
 
 45 MCP tools implemented. Stage 8 is a release audit, not a deployment. Do not merge, tag or start a production instance until the final regression and release-smoke jobs pass and the operator approves the staging checks below. Live Telegram, payment callbacks, provider billing, and actual ChatGPT authorization require separate credentials and operator-controlled staging tests.
 
+## Stage 10 release blockers
+
+See [Stage 10.1 architecture audit](STAGE_10_RELEASE_AUDIT.md) for confirmed source-level defects and the remediation sequence. In particular, do not enable real YooKassa payment creation or approval of production while PAY-01..03 remain unresolved. Green web-admin CI is not payment integration certification.
+
 ## Prepare an isolated staging host
 
 Use Docker Engine and Compose v2; select a distinct staging directory and Compose project name. Copy .env.example to .env, bot.env.example to bot.env, mcp.env.example to mcp.env. Restrict all three files to the operator (chmod 600); do not upload or commit them. Generate distinct high-entropy database and bearer secrets (e.g. openssl rand -hex 32). Set BOT_TOKEN to a separate staging bot token. Leave payment credentials and AI keys empty unless deliberately testing those integrations. Both generation budgets default to zero. Use only verified model IDs, formats and conservative tariffs, and set provider-side spend limits; local reservations are not invoice reconciliation.
