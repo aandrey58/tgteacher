@@ -57,12 +57,12 @@ async def render_source(content):
 READ.update({"parse_source":parse_source,"render_source":render_source,
              "tariffs":ops.tariffs,"campaigns":ops.campaigns,"support":ops.support_list,
              "reports":ops.reports,"active_subscription_count":ops.active_subscription_count,
-             "system_status":ops.system_status,"learner_answers":ops.learner_answers})
+             "system_status":ops.system_status,"learner_answers":ops.learner_answers,"admin_list":ops.admin_list})
 WRITE.update({"bulk_archive":ops.bulk_archive,"subscription":ops.subscription,
               "delete_learner":users.delete_user_and_progress_pg,"set_tariff":ops.set_tariff,
               "extend_active":ops.extend_active,"create_campaign":ops.create_campaign,
               "confirm_campaign":ops.confirm_campaign,"cancel_campaign":ops.cancel_campaign,
-              "close_question":ops.close_question,"set_snapshot_auto":ops.set_snapshot_auto,"request_snapshot":ops.request_snapshot})
+              "close_question":ops.close_question,"set_snapshot_auto":ops.set_snapshot_auto,"request_snapshot":ops.request_snapshot,"change_admin_list":ops.change_admin_list})
 PAGES = {"dashboard","groups","drafts","learners","reviews","media","tts","images","budgets","settings"}
 
 
