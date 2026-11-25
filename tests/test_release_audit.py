@@ -56,7 +56,6 @@ class CutoverTests(unittest.IsolatedAsyncioTestCase):
             return app.build_application()
 
     async def test_handler_inventory_switch_and_rollback(self):
-        import re
         from tgteacher_bot.core import app
         def inventory(application):
             return [(group,h) for group,handlers in application.handlers.items() for h in handlers]
@@ -69,7 +68,7 @@ class CutoverTests(unittest.IsolatedAsyncioTestCase):
         before=callbacks(legacy)
         after=callbacks(web)
         self.assertEqual(before,callbacks(rollback))
-        retired=[x for x in before if re.search(r"^\\^(?:admin_|snapshots_|status_info_|payment_option_)",x[1])]
+        retired=[x for x in before if x[1].startswith(("^admin_","^snapshots_","^status_info_","^payment_option_"))]
         self.assertGreater(len(retired),50)
         self.assertTrue(all(x not in after for x in retired))
         self.assertEqual([x[2] for x in after if x[1]==app.LEGACY_ADMIN_CALLBACK],["_legacy_admin_retired"])
@@ -97,7 +96,7 @@ class CutoverTests(unittest.IsolatedAsyncioTestCase):
         from tgteacher_bot.core import app
         with tempfile.TemporaryDirectory() as tmp:
             admins=Path(tmp)/"admins.txt"
-            admins.write_text("11\\n",encoding="utf-8")
+            admins.write_text("11"+chr(10),encoding="utf-8")
             with patch.object(app.paths,"admins_path",return_value=admins),patch.dict(os.environ,{"TGTEACHER_LEGACY_ADMIN":"0","TGTEACHER_WEB_ADMIN_URL":"https://example.test/admin"}):
                 for uid in (11,22):
                     buttons=[b for row in app.get_main_menu(uid).inline_keyboard for b in row]
