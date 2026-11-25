@@ -26,8 +26,10 @@ async def init_operations(c):
             singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK(singleton),
             auto_snapshots BOOLEAN,
             capture_requested BOOLEAN NOT NULL DEFAULT false,
-            capture_status TEXT NOT NULL DEFAULT 'idle'
+            capture_status TEXT NOT NULL DEFAULT 'idle',
+            capture_started TIMESTAMPTZ
         );
+        ALTER TABLE web_system_control ADD COLUMN IF NOT EXISTS capture_started TIMESTAMPTZ;
         INSERT INTO web_system_control(singleton) VALUES(true) ON CONFLICT DO NOTHING;
         CREATE TABLE IF NOT EXISTS web_support (
             id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -336,14 +338,29 @@ async def active_subscription_count():
         return {"count":await c.fetchval(f"SELECT count(*) FROM users WHERE {VIP} AND subscription_until IS NOT NULL")}
 
 
-async def reports(kind="learners", days=30, family_id=None):
+async def reports(kind="learners", days=30, family_id=None, start_date=None, end_date=None):
+    from datetime import date, timedelta
     if type(days) is not int or not 1<=days<=365:
         raise ValueError("Invalid report range")
+    if start_date is not None or end_date is not None:
+        start=date.fromisoformat(start_date)
+        end=date.fromisoformat(end_date)
+        if not 0<=(end-start).days<366:
+            raise ValueError("Invalid report dates")
+        params=[start,end+timedelta(days=1)]
+    else:
+        params=[days]
+    def recent(col):
+        if len(params)==2:
+            return f"({col}>=$1::date AND {col}<$2::date)"
+        return f"({col}>=now()-$1::int*interval '1 day')"
     pool=await get_pool()
     async with pool.acquire() as c:
         if kind in ("learners","new","inactive"):
-            condition={"learners":"TRUE","new":"registered_at>=now()-$1::int*interval '1 day'","inactive":"last_active_at<now()-$1::int*interval '1 day' OR last_active_at IS NULL"}[kind]
-            args=[] if kind=="learners" else [days]
+            if kind=="inactive" and len(params)==2:
+                raise ValueError("Inactive report uses a relative inactivity period")
+            condition={"learners":"TRUE","new":recent("registered_at"),"inactive":"last_active_at<now()-$1::int*interval '1 day' OR last_active_at IS NULL"}[kind]
+            args=[] if kind=="learners" else params
             rows=await c.fetch(f"""SELECT user_id::text AS user_id,username,first_name,last_name,registered_at::text AS registered_at,
                 last_active_at::text AS last_active_at,subscription_until::text AS subscription_until,is_subscribed
                 FROM users WHERE {condition} ORDER BY user_id LIMIT 10001""",*args)
@@ -357,20 +374,19 @@ async def reports(kind="learners", days=30, family_id=None):
         elif kind=="payments":
             if not await c.fetchval("SELECT to_regclass('payments') IS NOT NULL"):
                 return []
-            rows=await c.fetch("""SELECT payment_id,user_id::text AS user_id,months,amount AS amount_kopecks,status,
-                created_at::text AS created_at FROM payments WHERE created_at>=now()-$1::int*interval '1 day'
-                ORDER BY created_at DESC LIMIT 10001""",days)
+            rows=await c.fetch(f"""SELECT payment_id,user_id::text AS user_id,months,amount AS amount_kopecks,status,
+                created_at::text AS created_at FROM payments WHERE {recent("created_at")}
+                ORDER BY created_at DESC LIMIT 10001""",*params)
         elif kind=="system":
             if not await c.fetchval("SELECT to_regclass('system_snapshots') IS NOT NULL"):
                 return []
-            rows=await c.fetch("""SELECT ts::text AS ts,data::text AS data FROM system_snapshots
-                WHERE ts>=now()-$1::int*interval '1 day' ORDER BY ts DESC LIMIT 10001""",days)
+            rows=await c.fetch(f"""SELECT ts::text AS ts,data::text AS data FROM system_snapshots
+                WHERE {recent("ts")} ORDER BY ts DESC LIMIT 10001""",*params)
         else:
             raise ValueError("Invalid report type")
     if len(rows)>10000:
         raise ValueError("Report exceeds 10000 rows; narrow the date range")
     return [dict(r) for r in rows]
-
 
 def workbook(rows):
     from openpyxl import Workbook
@@ -378,7 +394,8 @@ def workbook(rows):
     ws=wb.create_sheet("Отчёт")
     if rows:
         keys=list(rows[0])
-        ws.append(keys)
+        titles={'user_id':'Telegram ID','username':'Имя пользователя','first_name':'Имя','last_name':'Фамилия','registered_at':'Регистрация','last_active_at':'Последняя активность','subscription_until':'VIP до','is_subscribed':'Флаг подписки','stage_num':'Этап','completed':'Выполнено','correct':'Верно','payment_id':'ID платежа','months':'Месяцы','amount_kopecks':'Сумма, коп.','status':'Статус','created_at':'Дата создания','ts':'Дата снимка','data':'Данные снимка'}
+        ws.append([titles.get(k,k) for k in keys])
         for row in rows:
             # Do not let user-provided text become executable spreadsheet formulas.
             ws.append(["'"+v if isinstance(v,str) and v.lstrip().startswith(("=","+","-","@")) else v for v in (row[k] for k in keys)])
@@ -417,7 +434,7 @@ async def request_snapshot():
     pool=await get_pool()
     async with pool.acquire() as c:
         row=await c.fetchrow("""UPDATE web_system_control SET capture_requested=true,capture_status='queued'
-            WHERE singleton AND NOT capture_requested AND capture_status<>'running' RETURNING capture_status""")
+            WHERE singleton AND NOT capture_requested AND (capture_status<>'running' OR capture_started<now()-interval '10 minutes') RETURNING capture_status""")
         if not row:
             raise ValueError("Snapshot already queued or running")
     return {"status":"queued"}
@@ -427,7 +444,7 @@ async def snapshot_job(context):
     from tgteacher_bot.services.legacy.system_snapshots import capture_and_store_snapshot
     pool=await get_pool()
     async with pool.acquire() as c:
-        row=await c.fetchrow("""UPDATE web_system_control SET capture_requested=false,capture_status='running'
+        row=await c.fetchrow("""UPDATE web_system_control SET capture_requested=false,capture_status='running',capture_started=now()
             WHERE singleton AND capture_requested RETURNING singleton""")
     if not row:
         return
