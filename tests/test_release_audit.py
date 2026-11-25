@@ -164,7 +164,7 @@ class CutoverTests(unittest.IsolatedAsyncioTestCase):
                 for failure in ("config","telegram","disk"):
                     ctx.user_data[support.AWAITING_HELP_QUESTION]=True
                     ctx.user_data[support.HELP_PROMPT_MESSAGE_ID]=8
-                    with patch.dict(os.environ,{"HELP_QUESTIONS_GROUP_ID":"" if failure=="config" else "-100123"}),patch.object(ctx.bot.send_message,"side_effect",RuntimeError("send failed") if failure=="telegram" else deliver),patch.object(support,"save_help_index_to_disk",return_value=False) if failure=="disk" else patch.object(support,"save_help_index_to_disk",wraps=support.save_help_index_to_disk):
+                    with patch.dict(os.environ,{"HELP_QUESTIONS_GROUP_ID":"" if failure=="config" else "-100123"}),patch.object(ctx.bot,"send_message",new=AsyncMock(side_effect=RuntimeError("send failed") if failure=="telegram" else deliver)),patch.object(support,"save_help_index_to_disk",return_value=False) if failure=="disk" else patch.object(support,"save_help_index_to_disk",wraps=support.save_help_index_to_disk):
                         with self.assertRaises(ApplicationHandlerStop):
                             await support.help_user_text_handler(update,ctx)
                     self.assertTrue(ctx.user_data[support.AWAITING_HELP_QUESTION])
