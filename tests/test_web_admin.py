@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"bot"))
 from tgteacher_bot import web_admin
-from tgteacher_bot.db import web_operations as ops
+from tgteacher_bot.db import web_operations as ops, stars_repo
 from tgteacher_bot.services.exports import web_transfer as transfer
 from test_images import fixture
 from test_tts import MP3
@@ -61,7 +61,7 @@ class WebDatabaseTests(unittest.TestCase):
             try:
                 from contextlib import ExitStack
                 with ExitStack() as stack:
-                    for mod in (web_admin,user_repo,drafts_repo,families_repo,content_versions,srs_repo,media_repo,tts_repo,image_repo,ops,transfer):
+                    for mod in (web_admin,user_repo,drafts_repo,families_repo,content_versions,srs_repo,media_repo,tts_repo,image_repo,ops,stars_repo,transfer):
                         stack.enter_context(patch.object(mod,"get_pool",new=AsyncMock(return_value=pool)))
                     async def init():
                         await user_repo.init_db_pg()
@@ -148,6 +148,10 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertEqual(action("set_tariff",{"months":60,"amount":100000},True).status_code,200)
                     self.assertEqual(action("tariffs",{}).json(),[{"months":60,"amount":100000}])
                     self.assertEqual(action("set_tariff",{"months":60,"remove":True},True).status_code,200)
+                    self.assertEqual(action("set_stars_tariff",{"months":3,"amount":250},True).status_code,200)
+                    self.assertEqual(action("stars_tariffs",{}).json(),[{"months":3,"amount":250}])
+                    self.assertEqual(action("tariffs",{}).json(),[])
+                    self.assertEqual(action("set_stars_tariff",{"months":3,"amount":0},True).status_code,400)
                     self.assertEqual(action("reports",{"kind":"payments"}).json()[0]["status"],"gift")
                     from openpyxl import load_workbook
                     report=client.get("/api/export_report?kind=learners")
@@ -316,6 +320,8 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertEqual(action("confirm_campaign",{"campaign_id":cid3,"expected_count":1},True).status_code,403)
                     self.assertEqual(action("cancel_campaign",{"campaign_id":cid3},True).status_code,403)
                     self.assertEqual(action("set_tariff",{"months":3,"amount":10},True).status_code,403)
+                    self.assertEqual(action("set_stars_tariff",{"months":3,"amount":10},True).status_code,403)
+                    self.assertEqual(action("stars_tariffs",{}).status_code,403)
                     self.assertEqual(action("change_own_password",{"current_password":password,"new_password":"new-test-password-12345"},True).status_code,200)
                     self.assertEqual(client.get("/api/session").status_code,401)
                     self.assertEqual(login_as("support-agent",password).status_code,401)
