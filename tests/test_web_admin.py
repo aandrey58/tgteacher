@@ -1,4 +1,6 @@
 import os
+import io
+import zipfile
 import sys
 import unittest
 import uuid
@@ -8,6 +10,10 @@ from starlette.testclient import TestClient
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"bot"))
 from tgteacher_bot import web_admin
+from tgteacher_bot.db import web_operations as ops
+from tgteacher_bot.services.exports import web_transfer as transfer
+from test_images import fixture
+from test_tts import MP3
 from tgteacher_bot.db import user_repo, drafts_repo, families_repo, content_versions, srs_repo, media_repo, tts_repo, image_repo
 
 SECRET="web-only-secret-"+"a"*32
@@ -24,6 +30,10 @@ class WebSecurityTests(unittest.TestCase):
         app=web_admin.build_app(SECRET,ORIGIN,initialize=False)
         with TestClient(app,base_url=ORIGIN) as client:
             self.assertEqual(client.get("/api/groups").status_code,401)
+            for route in ("export_zip?family_id=1","export_report","template"):
+                self.assertEqual(client.get("/api/"+route).status_code,401)
+            for route in ("import_zip","upload_media?kind=image"):
+                self.assertEqual(client.post("/api/"+route,content=b"x",headers={"Origin":ORIGIN,"X-Confirm":"true"}).status_code,401)
             self.assertEqual(client.get("/api/asset?kind=image&id="+"a"*64).status_code,401)
             self.assertEqual(client.post("/api/login",json={"secret":SECRET},headers={"Origin":"https://foreign.example"}).status_code,403)
             self.assertEqual(client.post("/api/login",json={"secret":"wrong"},headers={"Origin":ORIGIN}).status_code,401)
@@ -46,7 +56,7 @@ class WebDatabaseTests(unittest.TestCase):
             try:
                 from contextlib import ExitStack
                 with ExitStack() as stack:
-                    for mod in (web_admin,user_repo,drafts_repo,families_repo,content_versions,srs_repo,media_repo,tts_repo,image_repo):
+                    for mod in (web_admin,user_repo,drafts_repo,families_repo,content_versions,srs_repo,media_repo,tts_repo,image_repo,ops,transfer):
                         stack.enter_context(patch.object(mod,"get_pool",new=AsyncMock(return_value=pool)))
                     async def init():
                         await user_repo.init_db_pg()
@@ -85,6 +95,78 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertEqual(action("archive",{"family_id":fid,"archived":False},True).status_code,200)
                     self.assertEqual(client.get("/api/drafts?status=Draft").json()["items"],[])
                     self.assertEqual(len(client.get("/api/drafts?status=Published").json()["items"]),1)
+                    # All new endpoints are exercised against the same isolated database.
+                    def post_file(route,data,confirmed=True):
+                        return client.post("/api/"+route,content=data,headers={**headers,"X-Confirm":str(confirmed).lower()})
+                    self.assertEqual(post_file("upload_media?kind=image",fixture(),False).status_code,400)
+                    self.assertEqual(post_file("upload_media?kind=image",b"not an image").status_code,400)
+                    image=post_file("upload_media?kind=image",fixture())
+                    self.assertEqual(image.status_code,200,image.text)
+                    self.assertEqual(post_file("upload_media?kind=image",fixture()).json()["asset_id"],image.json()["asset_id"])
+                    audio=post_file("upload_media?kind=audio",MP3)
+                    self.assertEqual(audio.status_code,200,audio.text)
+                    archive=io.BytesIO()
+                    with zipfile.ZipFile(archive,"w") as z:
+                        z.writestr("lesson/lesson.txt",'#FAMILY "Portable"\n#WORD ticket\n#TRANSLATION билет\n#STAGE5\n#TASK\n#IMAGE picture.png\n#ANSWER ticket\n#STAGE7\n#TASK\n#AUDIO sound.mp3\n#ANSWER ticket\n#CHOICES ticket; hat; bag; coat\n')
+                        z.writestr("lesson/picture.png",fixture())
+                        z.writestr("lesson/sound.mp3",MP3)
+                    imp=post_file("import_zip",archive.getvalue())
+                    self.assertEqual(imp.status_code,200,imp.text)
+                    imported=imp.json()["draft_id"]
+                    self.assertEqual(imp.json()["assets"],2)
+                    self.assertTrue(action("validate",{"draft_id":imported}).json()["publishable"])
+                    published=action("publish",{"draft_id":imported,"expected_revision":1},True)
+                    self.assertEqual(published.status_code,200,published.text)
+                    portable=published.json()["family_id"]
+                    exported=client.get("/api/export_zip?family_id="+str(portable))
+                    self.assertEqual(exported.status_code,200,exported.text if exported.status_code!=200 else "")
+                    self.assertEqual(len(transfer.parse_archive(exported.content)[1]),2)
+                    self.assertEqual(action("bulk_archive",{"family_ids":[fid,99999],"archived":True},True).status_code,400)
+                    self.assertFalse(action("family",{"family_id":fid}).json()["archived_at"])
+                    self.assertEqual(action("bulk_archive",{"family_ids":[fid,portable],"archived":True},True).json()["count"],2)
+                    self.assertEqual(action("bulk_archive",{"family_ids":[fid,portable],"archived":False},True).json()["count"],2)
+                    client.portal.call(user_repo.add_or_update_user_pg,11,"=SUM(1,2)","Demo","One")
+                    client.portal.call(user_repo.add_or_update_user_pg,22,"two","Demo","Two")
+                    gift={"user_ids":[11],"days":15,"operation_id":str(uuid.uuid4())}
+                    self.assertEqual(action("subscription",gift,True).status_code,200)
+                    self.assertEqual(action("subscription",gift,True).status_code,400)
+                    self.assertEqual(action("active_subscription_count",{}).json()["count"],1)
+                    self.assertEqual(action("extend_active",{"days":3,"expected_count":1},True).status_code,200)
+                    self.assertEqual(action("set_tariff",{"months":60,"amount":100000},True).status_code,200)
+                    self.assertEqual(action("tariffs",{}).json(),[{"months":60,"amount":100000}])
+                    self.assertEqual(action("set_tariff",{"months":60,"remove":True},True).status_code,200)
+                    self.assertEqual(action("reports",{"kind":"payments"}).json()[0]["status"],"gift")
+                    from openpyxl import load_workbook
+                    report=client.get("/api/export_report?kind=learners")
+                    self.assertEqual(report.status_code,200)
+                    ws=load_workbook(io.BytesIO(report.content)).active
+                    self.assertEqual(ws["B2"].data_type,"s")
+                    self.assertTrue(ws["B2"].value.startswith("'="))
+                    # Confirm exactly once; preview does not send.
+                    cid=str(uuid.uuid4())
+                    args={"campaign_id":cid,"target":"selected","user_ids":[11,22],"text":"Demo message"}
+                    self.assertEqual(action("create_campaign",args,True).json()["recipients"],2)
+                    bot=type("Bot",(),{"send_message":AsyncMock(),"send_photo":AsyncMock()})()
+                    self.assertFalse(client.portal.call(ops.deliver_one,bot))
+                    self.assertEqual(action("confirm_campaign",{"campaign_id":cid,"expected_count":1},True).status_code,400)
+                    self.assertEqual(action("confirm_campaign",{"campaign_id":cid,"expected_count":2},True).status_code,200)
+                    self.assertEqual(action("confirm_campaign",{"campaign_id":cid,"expected_count":2},True).status_code,400)
+                    self.assertTrue(client.portal.call(ops.deliver_one,bot))
+                    bot.send_message.assert_awaited_once()
+                    self.assertEqual(action("cancel_campaign",{"campaign_id":cid},True).status_code,200)
+                    self.assertFalse(client.portal.call(ops.deliver_one,bot))
+                    campaign=action("campaigns",{}).json()["items"][0]
+                    self.assertEqual((campaign["sent"],campaign["cancelled"]),(1,1))
+                    question=client.portal.call(ops.create_question,22,"Where is the lesson?")
+                    cid2=str(uuid.uuid4())
+                    self.assertEqual(action("create_campaign",{"campaign_id":cid2,"target":"support","question_id":question,"text":"Open Groups"},True).status_code,200)
+                    self.assertEqual(action("confirm_campaign",{"campaign_id":cid2,"expected_count":1},True).status_code,200)
+                    self.assertTrue(client.portal.call(ops.deliver_one,bot))
+                    self.assertEqual(action("support",{}).json()["items"][0]["status"],"answered")
+                    self.assertEqual(action("close_question",{"question_id":question},True).status_code,200)
+                    self.assertEqual(action("subscription",{"user_ids":[11],"revoke":True},True).status_code,200)
+                    self.assertEqual(action("delete_learner",{"user_id":22},True).status_code,200)
+                    self.assertEqual(action("support",{}).json()["items"],[])
                     self.assertEqual(action("arbitrary",{},True).status_code,404)
                     cookie=client.cookies.get(web_admin.COOKIE)
                     self.assertEqual(client.post("/api/logout",json={},headers=headers).status_code,200)
@@ -94,3 +176,24 @@ class WebDatabaseTests(unittest.TestCase):
                 client.portal.call(pool.close)
                 client.portal.call(conn.execute,f'DROP SCHEMA "{schema}" CASCADE')
                 client.portal.call(conn.close)
+
+
+class TransferTests(unittest.TestCase):
+    def test_reject_traversal_duplicate_and_missing_media(self):
+        source='#FAMILY "Safe"\n#WORD ticket\n#TRANSLATION билет\n'
+        for entries in (
+            [("../lesson.txt",source)],
+            [("lesson.txt",source),("LESSON.TXT",source)],
+            [("lesson.txt",source+"#STAGE5\n#TASK\n#IMAGE missing.jpg\n#ANSWER ticket\n")],
+        ):
+            out=io.BytesIO()
+            with zipfile.ZipFile(out,"w") as z:
+                for name,data in entries:
+                    z.writestr(name,data)
+            with self.assertRaises(ValueError):
+                transfer.parse_archive(out.getvalue())
+
+    def test_invalid_media_rejected(self):
+        for kind in ("image","audio"):
+            with self.assertRaises(ValueError):
+                transfer.prepare_asset(kind,b"invalid")
