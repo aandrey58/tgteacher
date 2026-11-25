@@ -9,7 +9,7 @@ from tgteacher_bot.db import user_repo as users, families_repo as families, draf
 from tgteacher_bot.db.pool import get_pool
 
 async def main():
-    if os.getenv("POSTGRES_PASSWORD") != "ci-only-password" or os.getenv("WEB_ADMIN_SECRET") != "ci-only-web-admin-"+"a"*32:
+    if os.getenv("POSTGRES_PASSWORD") != "ci-only-admin-runtime-cccccccc" or os.getenv("WEB_ADMIN_SECRET") != "ci-only-web-admin-"+"a"*32:
         raise RuntimeError("Refusing to seed a non-CI installation")
     await users.init_db_pg()
     pool = await get_pool()

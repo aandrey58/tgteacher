@@ -28,6 +28,10 @@ AUTO_SNAPSHOT_INTERVAL_SECONDS = 5 * 60  # каждые 5 минут
 
 
 async def init_system_snapshots_pg() -> None:
+    from tgteacher_bot.db.schema_access import verify_only, verify_schema
+    if verify_only():
+        await verify_schema()
+        return
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(

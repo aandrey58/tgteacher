@@ -79,3 +79,20 @@ Application images run as UID/GID 10001; Compose drops all capabilities and enab
 The admin service no longer reads mcp.env. If web generation is used, copy ONLY approved AI provider configuration (see admin.env.example) to admin.env. Do not copy MCP bearer tokens, OAuth client secrets or BOT_TOKEN. Use separate provider credentials where supported; keep identical approved model/pricing/budget definitions across services to avoid inconsistent accounting. Both budgets default to zero. Check that generated media features work in staging before production; never print the resolved Compose environment or credentials to logs.
 
 The legacy tracked bot/admins.txt is removed from this branch, not rewritten from Git history. Do not restore it from source; use a private runtime administrator list. Historical commits and main are untouched. Database roles remain shared; this change does not provide database least privilege or a complete secrets audit.
+
+## PostgreSQL role isolation (SEC-01, staging candidate)
+
+Use a dedicated TGTeacher database and stop all writers before changing roles or schema. The base compose remains a legacy compatibility mode and is NOT the hardened production candidate. The opt-in overlay removes the owner credential from runtime containers. Back up and restore-test the DB first. Set three distinct random ASCII passwords in .env (at least 24 characters, e.g. openssl rand -hex 32). Never reuse the owner password. Then on the intended staging host:
+
+```sh
+export COMPOSE_FILE=docker-compose.yml:docker-compose.isolated.yml
+docker compose up -d --wait db
+docker compose --profile migration run --rm --build db-migrate
+docker compose --profile web up -d --build mcp admin
+# Start bot only with approved staging token:
+# docker compose up -d bot
+```
+
+Run the one-shot migrator again before starting an upgraded schema version; do not keep a privileged service running. Runtime services refuse startup on wrong role or schema-release marker. Migration requires the existing database administrator, public schema, and dedicated database; it revokes PUBLIC table/sequence privileges and TEMP on this database. Do not use on a shared application database. Grants are explicit per table; future schema/table changes require updating the allowlist and incrementing the schema release marker. No automatic rollback to owner credentials.
+
+Bot retains broad content/learner/payment/queue writes for legacy administration; admin retains content/learner/queue/auth writes, payment reporting and legacy gift ledger writes; MCP has content/review/progress writes (publication remaps progress), read access to learner records/tokens, and no payment, support, web identity or snapshot table access. This is service isolation, not per-learner SQL row-level security. Existing paid ledger policy and staging backup/restore remain unchanged. Database-level PUBLIC CONNECT to other databases, superuser administration and provider-side auth are outside this slice.

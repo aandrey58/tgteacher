@@ -1,0 +1,38 @@
+# Explicit opt-in isolated database mode. Run the offline migrator first.
+services:
+  db-migrate:
+    profiles: ["migration"]
+    build: .
+    command: ["python", "-m", "tgteacher_bot.db.provision_roles"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-tgteacher}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      TGTEACHER_BOT_DB_PASSWORD: ${TGTEACHER_BOT_DB_PASSWORD:?set isolated bot password}
+      TGTEACHER_MCP_DB_PASSWORD: ${TGTEACHER_MCP_DB_PASSWORD:?set isolated MCP password}
+      TGTEACHER_ADMIN_DB_PASSWORD: ${TGTEACHER_ADMIN_DB_PASSWORD:?set isolated admin password}
+    depends_on:
+      db:
+        condition: service_healthy
+  bot:
+    environment:
+      POSTGRES_USER: tgteacher_bot_runtime
+      POSTGRES_PASSWORD: ${TGTEACHER_BOT_DB_PASSWORD:?set isolated bot password}
+      TGTEACHER_DB_SCHEMA_MODE: verify
+      TGTEACHER_DB_SERVICE: bot
+  mcp:
+    environment:
+      POSTGRES_USER: tgteacher_mcp_runtime
+      POSTGRES_PASSWORD: ${TGTEACHER_MCP_DB_PASSWORD:?set isolated MCP password}
+      TGTEACHER_DB_SCHEMA_MODE: verify
+      TGTEACHER_DB_SERVICE: mcp
+  admin:
+    environment:
+      POSTGRES_USER: tgteacher_admin_runtime
+      POSTGRES_PASSWORD: ${TGTEACHER_ADMIN_DB_PASSWORD:?set isolated admin password}
+      TGTEACHER_DB_SCHEMA_MODE: verify
+      TGTEACHER_DB_SERVICE: admin

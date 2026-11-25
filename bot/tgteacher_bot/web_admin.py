@@ -506,7 +506,9 @@ def build_app(secret, origin, static_dir=None, initialize=True, allow_recovery=T
             async with pool.acquire() as c:
                 async with c.transaction():
                     await c.execute("SELECT pg_advisory_xact_lock(847231,8)")
-                    await init_web(c)
+                    from tgteacher_bot.db.schema_access import verify_only
+                    if not verify_only():
+                        await init_web(c)
                     if not allow_recovery and not await c.fetchval("SELECT 1 FROM web_admin_accounts WHERE role='owner' AND enabled LIMIT 1"):
                         raise RuntimeError("Create an enabled owner before disabling recovery")
         yield

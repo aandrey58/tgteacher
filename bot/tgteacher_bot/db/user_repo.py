@@ -13,6 +13,10 @@ MAX_USER_DATA_SIZE = 1000  # Максимальное количество по�
 
 @track_db_errors
 async def init_db_pg():
+    from tgteacher_bot.db.schema_access import verify_only, verify_schema
+    if verify_only():
+        await verify_schema()
+        return
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
