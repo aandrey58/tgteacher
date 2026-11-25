@@ -54,7 +54,9 @@ async def render_source(content):
     return {"source":render_family_txt(candidate)}
 
 
-READ.update({"parse_source":parse_source,"render_source":render_source,
+from tgteacher_bot.services.legacy.safe_events import recent as safe_system_events
+
+READ.update({"safe_system_events":safe_system_events,"parse_source":parse_source,"render_source":render_source,
              "tariffs":ops.tariffs,"campaigns":ops.campaigns,"support":ops.support_list,
              "reports":ops.reports,"active_subscription_count":ops.active_subscription_count,
              "system_status":ops.system_status,"learner_answers":ops.learner_answers,"admin_list":ops.admin_list})

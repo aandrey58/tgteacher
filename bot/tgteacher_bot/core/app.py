@@ -72,6 +72,8 @@ log_file_handler.setFormatter(
     logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 )
 logging.getLogger().addHandler(log_file_handler)
+from tgteacher_bot.services.legacy.safe_events import install as install_safe_events
+install_safe_events()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 

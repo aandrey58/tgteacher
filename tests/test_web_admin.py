@@ -200,6 +200,7 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertEqual(result["uncertain"],1)
                     self.assertEqual(action("set_snapshot_auto",{"enabled":False},True).status_code,200)
                     self.assertFalse(action("system_status",{}).json()["auto_snapshots"])
+                    self.assertEqual(action("safe_system_events",{}).status_code,200)
                     self.assertEqual(action("request_snapshot",{},True).status_code,200)
                     self.assertEqual(action("request_snapshot",{},True).status_code,400)
                     from tempfile import TemporaryDirectory
@@ -256,6 +257,23 @@ class TransferTests(unittest.TestCase):
         for invalid in (b"[]", b'{"1":{}}', b'{"0":{}}'):
             with self.assertRaises(ValueError):
                 ops.parse_legacy_help(invalid,-100)
+
+    def test_safe_log_never_exposes_message_or_traceback(self):
+        import logging
+        import json
+        from tempfile import TemporaryDirectory
+        from tgteacher_bot.services.legacy.safe_events import SafeFormatter,read_events
+        record=logging.LogRecord("tgteacher_bot.db.pool",logging.ERROR,"secret.py",1,"secret token %s",("123456",),None)
+        record.exc_text="private traceback"
+        formatted=SafeFormatter().format(record)
+        self.assertNotIn("secret",formatted)
+        self.assertNotIn("123456",formatted)
+        self.assertNotIn("traceback",formatted)
+        with TemporaryDirectory() as temp:
+            path=Path(temp)/"safe.jsonl"
+            path.write_text(formatted+"\n"+json.dumps({"time":"2026-11-25T12:00:00+00:00","level":"error","category":"bot","message":"SECRET"})+"\n",encoding="utf-8")
+            self.assertEqual(len(read_events(path)),1)
+            self.assertEqual(read_events(path)[0]["category"],"database")
 
     def test_invalid_media_rejected(self):
         for kind in ("image","audio"):
