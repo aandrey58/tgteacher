@@ -1,10 +1,7 @@
 import {test,expect} from '@playwright/test';
 
-const sizes=[{width:1536,height:960},{width:320,height:568},{width:375,height:812},{width:390,height:844},{width:430,height:932},{width:768,height:1024}];
-for (const [browserName,viewport] of [...sizes.map(v=>['chromium',v]),['webkit',sizes[3]]]) {
- test.describe(browserName+' '+viewport.width,()=>{
- test.use({browserName,viewport,hasTouch:viewport.width<=900,isMobile:viewport.width<=900});
- test('authenticated admin',async({page},testInfo)=>{
+test('authenticated admin',async({page,browserName},testInfo)=>{
+  const viewport=page.viewportSize();
   test.setTimeout(90000);
   const browserErrors=[];
   page.on('pageerror',e=>browserErrors.push(e.message));
@@ -113,6 +110,4 @@ for (const [browserName,viewport] of [...sizes.map(v=>['chromium',v]),['webkit',
   await page.getByRole('button',{name:'Выйти'}).click();
   await expect(page.getByRole('button',{name:'Войти'})).toBeVisible();
   expect(browserErrors).toEqual([]);
- });
- });
-}
+});
