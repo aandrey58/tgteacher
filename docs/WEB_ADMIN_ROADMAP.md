@@ -24,9 +24,28 @@ Copy admin.env.example to admin.env, set WEB_ADMIN_SECRET to a unique 32+ charac
 
 Open http://127.0.0.1:8080. This is loopback-only. Remote access requires HTTPS reverse proxy, exact WEB_ADMIN_ORIGIN and proxy rate limiting. Do not expose the development server. Do not share the credential with learners or paste it into prompts. Changing the credential invalidates prior sessions; logout revokes the session in PostgreSQL. Use the same mcp.env values on admin and MCP processes; do not configure divergent budget limits.
 
-## Phase 9.2 — feature parity before cutover
+## Phase 9.2 — reference design and content workflow
 
-Polish visual editor with inline validation, searchable full asset picker, dedicated detach action and version diff. Bring ZIP import/export, bulk operations, remaining legacy user/subscription/account actions, admin messaging/help workflows, reports and operational health to the web after inventorying actual Telegram admin handlers. Use actual measured analytics, explicitly distinguish forecast and self-assessment. Add per-administrator identity/roles and richer audit attribution; migrate settings safely rather than editing arbitrary environment secrets from the browser. Add authenticated media upload and attachment UI. No unsupported provider, fictitious stats, automated quality score or dummy success controls.
+- Reference-style light layout, section KPI cards, group table with status/access filters and sorting, publishing timeline and responsive media gallery/list. Search uses the database before pagination; group search includes vocabulary and translations.
+- Eight-stage visual editor with revision validation, searchable paginated asset picker, detach action and stable-ID version comparison; source editor remains available.
+- React navigation protects against stale responses; search controls remain mounted during same-page requests. No fabricated production metrics.
+- Browser acceptance: all ten sections plus editor screenshots at 1536 and 390 px, create/edit/validate/publish, group filtering, version comparison, logout, no horizontal document overflow or browser exceptions. Synthetic fixture data is confined to the isolated CI database. CI artifacts retain screenshots for manual review.
+
+## Phase 9.3 — mobile UX
+
+Polish small-screen ergonomics, touch targets, modal focus/scroll handling and accessibility across additional viewport widths and browsers.
+
+## Phase 9.4 — feature parity before cutover
+
+Bring ZIP import/export, bulk operations, remaining legacy user/subscription/account actions, admin messaging/help workflows, reports and operational health to the web after inventorying actual Telegram admin handlers. Add authenticated media upload and remaining attachment workflows.
+
+## Phase 9.5 — security and reliability
+
+Add per-administrator identity/roles and richer audit attribution; migrate settings safely rather than editing arbitrary environment secrets from the browser. Review authorization, concurrency, budgets and performance. Use actual measured analytics, explicitly distinguish forecast and self-assessment.
+
+## Phase 9.6 — acceptance and cutover
+
+Run full regression and browser workflows, compare screenshots against the approved references, verify feature parity and rollback plan, then disable legacy admin handlers. No unsupported provider, fictitious stats, automated quality score or dummy success controls.
 
 ## Cutover
 
