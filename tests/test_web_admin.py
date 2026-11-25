@@ -84,6 +84,10 @@ class WebDatabaseTests(unittest.TestCase):
                     self.assertEqual(action("create_draft",args,True,"https://foreign.example").status_code,403)
                     self.assertEqual(action("create_draft",args,True).status_code,200)
                     self.assertEqual(action("validate",{"draft_id":ident}).status_code,200)
+                    named=client.get("/api/drafts?q=Web%20group").json()["items"]
+                    self.assertEqual([(r["draft_id"],r["draft_name"]) for r in named],[(ident,"Web group")])
+                    self.assertEqual(client.get("/api/drafts?q="+ident).json()["items"][0]["draft_name"],"Web group")
+                    self.assertEqual(client.get("/api/drafts?q=unmatched-123456").json()["items"],[])
                     result=action("publish",{"draft_id":ident,"expected_revision":1},True)
                     self.assertEqual(result.status_code,200,result.text)
                     self.assertEqual(client.get("/api/groups").json()["items"][0]["name"],"Web group")

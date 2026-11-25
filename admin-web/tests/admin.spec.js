@@ -49,6 +49,18 @@ test('authenticated admin',async({page,browserName},testInfo)=>{
       await expect(page.getByRole('cell').filter({hasText:'Food & cooking'})).toHaveCount(0);
       await search.clear();
       await expect(page.getByRole('cell').filter({hasText:'Food & cooking'})).toBeVisible();
+      const all=page.getByRole('checkbox',{name:'Выбрать все записи страницы',exact:true});
+      await expect(all).toBeVisible();
+      await all.check();
+      await expect(page.locator('.bulk-bar')).toBeVisible();
+      await all.uncheck();
+      await expect(page.locator('.bulk-bar')).toHaveCount(0);
+    }
+    if(nav==='Черновики'){
+      const search=page.getByRole('textbox',{name:'Поиск по текущему разделу'});
+      await search.fill('Travel essentials');
+      await expect(page.locator('.draft-name').filter({hasText:'Travel essentials'}).first()).toBeVisible();
+      await search.clear();
     }
     if(nav==='Настройки'){
       const search=page.getByRole('textbox',{name:'Поиск по текущему разделу'});
@@ -59,6 +71,7 @@ test('authenticated admin',async({page,browserName},testInfo)=>{
       await expect.poll(()=>page.locator('.records-settings tbody tr').count()).toBeGreaterThan(0);
     }
     if(nav==='Медиатека') await expect.poll(()=>page.locator('.asset-card').count()).toBeGreaterThanOrEqual(3);
+    await page.evaluate(()=>{document.activeElement?.blur();window.scrollTo(0,0)});
     await page.screenshot({path:testInfo.outputPath(nav.toLowerCase()+'.png'),fullPage:true});
   }
   if(compact)await page.getByRole('button',{name:'Открыть меню'}).click();

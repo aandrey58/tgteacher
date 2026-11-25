@@ -202,12 +202,14 @@ async def page_data(page, offset, query, status="All", access="All", sort="updat
         elif page=="drafts":
             rows=await c.fetch("""SELECT * FROM (
                 SELECT id::text AS draft_id,'new' AS kind,family_id,revision,
-                    CASE WHEN published_at IS NULL THEN 'Draft' ELSE 'Published' END AS status,updated_at::text AS updated_at
+                    CASE WHEN published_at IS NULL THEN 'Draft' ELSE 'Published' END AS status,updated_at::text AS updated_at,
+                    left(substring(family_txt from '(?n)^[[:blank:]]*#FAMILY[[:blank:]]+"([^"]+)"'),200) AS draft_name
                 FROM content_drafts WHERE deleted_at IS NULL
                 UNION ALL SELECT id::text,'edit',family_id,revision,
-                    CASE WHEN published_version IS NULL THEN 'Draft' ELSE 'Published' END,created_at::text
+                    CASE WHEN published_version IS NULL THEN 'Draft' ELSE 'Published' END,created_at::text,
+                    left(content->>'name',200)
                 FROM family_edit_drafts WHERE deleted_at IS NULL
-                 ) d WHERE ($1='' OR strpos(lower(draft_id),lower($1))>0)
+                 ) d WHERE ($1='' OR strpos(lower(concat_ws(' ',draft_id,draft_name,family_id::text)),lower($1))>0)
                 AND ($3='All' OR status=$3) ORDER BY updated_at DESC,draft_id LIMIT 51 OFFSET $2""",query,offset,status)
         elif page=="learners":
             rows=await c.fetch(f"""WITH selected AS (
