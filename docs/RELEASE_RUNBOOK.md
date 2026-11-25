@@ -10,7 +10,7 @@ See [Stage 10.1 architecture audit](STAGE_10_RELEASE_AUDIT.md) for confirmed sou
 
 ## Prepare an isolated staging host
 
-Use Docker Engine and Compose v2; select a distinct staging directory and Compose project name. Copy .env.example to .env, bot.env.example to bot.env, mcp.env.example to mcp.env. Restrict all three files to the operator (chmod 600); do not upload or commit them. Generate distinct high-entropy database and bearer secrets (e.g. openssl rand -hex 32). Set BOT_TOKEN to a separate staging bot token. Leave payment credentials and AI keys empty unless deliberately testing those integrations. Both generation budgets default to zero. Use only verified model IDs, formats and conservative tariffs, and set provider-side spend limits; local reservations are not invoice reconciliation.
+Use Docker Engine and Compose v2; select a distinct staging directory and Compose project name. Copy .env.example to .env, bot.env.example to bot.env, mcp.env.example to mcp.env, and admin.env.example to admin.env if enabling web admin. Restrict all files to the operator (chmod 600); do not upload or commit them. Generate distinct high-entropy database and bearer secrets (e.g. openssl rand -hex 32). Set BOT_TOKEN to a separate staging bot token. Leave payment credentials and AI keys empty unless deliberately testing those integrations. Both generation budgets default to zero. Use only verified model IDs, formats and conservative tariffs, and set provider-side spend limits; local reservations are not invoice reconciliation.
 
 For existing installations, stop all older bot/MCP writers before schema upgrade. Preserve the original Compose project/volume name and database credentials when upgrading; changing POSTGRES_PASSWORD does not update an existing Postgres role. Back up the database with pg_dump -Fc and separately copy the families, bot/exports, runtime_cache, admins list and legacy indexes. Restore the dump into an isolated database to verify the backup before migration. Never run docker compose down -v against production.
 
@@ -20,8 +20,12 @@ Create runtime_cache and bot/exports directories; place approved Telegram numeri
 cp .env.example .env
 cp bot.env.example bot.env
 cp mcp.env.example mcp.env
-chmod 600 .env bot.env mcp.env
-mkdir -p runtime_cache bot/exports
+cp admin.env.example admin.env
+chmod 600 .env bot.env mcp.env admin.env
+mkdir -p runtime_cache bot/exports families
+# After taking the backup and stopping old writers, on the intended staging host:
+sudo chown -R 10001:10001 runtime_cache bot/exports families
+sudo chmod -R u+rwX runtime_cache bot/exports families
 # Fill credentials and administrator list before running.
 docker compose config --quiet
 docker compose build
@@ -67,3 +71,11 @@ See [Web admin cutover checklist](WEB_ADMIN_CUTOVER.md). Switch only after the w
 - Only then approve deployment and create the release tag. Keep backup and rollback plan.
 
 Known limits: local budget counts reservations, not provider-side invoices; interrupted requests may remain pending and are deliberately not retried. Parallelism limits are per batch, not global provider quotas. Legacy ZIP import keeps local media rather than reconstructed generated-asset provenance; archive and version history within the same installation retain managed bytes. Older lesson callbacks within the same version are not all single-use (SRS tickets are). External OAuth identity binding, live payments, actual deployment and full security penetration test are not certified by CI.
+
+## SEC-01 container migration
+
+Application images run as UID/GID 10001; Compose drops all capabilities and enables no-new-privileges. Before upgrading an existing installation, stop writers, verify backups, and ensure the three bind-mounted directories are owned/writable by UID 10001. The application code remains root-owned and non-writable. Do not apply recursive permission changes to unrelated directories or the PostgreSQL volume. Raw bot logs now live in runtime_cache/log.txt under Compose; existing historical logs are not automatically removed. Preserve access for the operator through appropriate host permissions.
+
+The admin service no longer reads mcp.env. If web generation is used, copy ONLY approved AI provider configuration (see admin.env.example) to admin.env. Do not copy MCP bearer tokens, OAuth client secrets or BOT_TOKEN. Use separate provider credentials where supported; keep identical approved model/pricing/budget definitions across services to avoid inconsistent accounting. Both budgets default to zero. Check that generated media features work in staging before production; never print the resolved Compose environment or credentials to logs.
+
+The legacy tracked bot/admins.txt is removed from this branch, not rewritten from Git history. Do not restore it from source; use a private runtime administrator list. Historical commits and main are untouched. Database roles remain shared; this change does not provide database least privilege or a complete secrets audit.

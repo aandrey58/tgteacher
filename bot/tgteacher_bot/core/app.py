@@ -66,7 +66,8 @@ logging.basicConfig(
 
 # Keep runtime log file behaviour (relative path), but default it to project root if run from elsewhere.
 log_file_handler = RotatingFileHandler(
-    "log.txt", maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+    os.path.join(os.environ["TGTEACHER_RUNTIME_DIR"], "log.txt") if os.getenv("TGTEACHER_RUNTIME_DIR") else "log.txt",
+    maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
 )
 log_file_handler.setFormatter(
     logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")

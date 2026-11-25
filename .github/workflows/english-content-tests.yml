@@ -63,6 +63,8 @@ jobs:
           cp admin.env.example admin.env
           echo 'WEB_ADMIN_SECRET=ci-only-web-admin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' >> admin.env
           mkdir -p runtime_cache bot/exports
+          sudo chown -R 10001:10001 runtime_cache bot/exports families
+          sudo chmod -R u+rwX runtime_cache bot/exports families
           docker compose config --quiet
       - name: Build release containers
         run: docker compose build bot mcp
@@ -86,6 +88,14 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8080/ | grep 'TGTeacher Admin'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/groups)" = 401
+      - name: Verify container privilege and secret isolation
+        run: |
+          for service in bot mcp admin; do
+            docker compose --profile web run --rm --no-deps "$service" python -c 'import os; assert os.getuid()==10001 and os.getgid()==10001; fields=dict(line.split(":",1) for line in open("/proc/self/status") if ":" in line); assert int(fields["CapEff"].strip(),16)==0; assert fields["NoNewPrivs"].strip()=="1"; assert not os.access("/app/bot/tgteacher_bot",os.W_OK)'
+          done
+          docker compose run --rm --no-deps bot python -c 'import os,tempfile; assert os.environ.get("BOT_TOKEN"); assert not os.environ.get("TGTEACHER_MCP_READ_TOKEN"); assert not os.environ.get("WEB_ADMIN_SECRET"); [tempfile.TemporaryFile(dir=p).close() for p in ("/app/runtime_cache","/app/bot/exports","/app/families")]'
+          docker compose exec -T mcp python -c 'import os; assert os.environ.get("TGTEACHER_MCP_READ_TOKEN"); assert not os.environ.get("BOT_TOKEN"); assert not os.environ.get("WEB_ADMIN_SECRET"); assert not os.access("/app/families",os.W_OK)'
+          docker compose --profile web exec -T admin python -c 'import os; assert os.environ.get("WEB_ADMIN_SECRET"); assert not any(k.startswith("TGTEACHER_MCP_") for k in os.environ); assert not os.environ.get("BOT_TOKEN"); assert not os.access("/app/runtime_cache",os.W_OK); assert not os.access("/app/families",os.W_OK)'
       - name: Seed synthetic screenshot data
         run: docker compose --profile web exec -T admin python - < tests/seed_web_demo.py
       - uses: actions/setup-node@v4

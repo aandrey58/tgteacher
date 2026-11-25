@@ -13,4 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY bot/tgteacher_bot /app/bot/tgteacher_bot
 COPY --from=ui /ui/dist /app/admin-dist
+RUN groupadd --gid 10001 tgteacher && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin tgteacher
+ENV HOME=/home/tgteacher
+USER 10001:10001
 CMD ["python", "-m", "tgteacher_bot.web_admin"]
