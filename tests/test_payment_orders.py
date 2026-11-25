@@ -283,3 +283,33 @@ class PaymentDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.snapshot(),first)
         async with self.pool.acquire() as c:
             self.assertEqual(await c.fetchval("SELECT count(*) FROM payments WHERE status='gift'"),1)
+
+    async def test_deleted_learner_cannot_be_restored_by_legacy_import_or_grant(self):
+        await users.add_or_update_user_pg(11,"old","Old","Name")
+        await users.delete_user_and_progress_pg(11)
+        self.assertTrue(await users.has_deletion_marker(11))
+        results=await asyncio.gather(*(users.add_or_update_user_pg(11,"stale","Old","Name") for _ in range(8)))
+        self.assertEqual(results,["blocked"]*8)
+        with self.assertRaises(ValueError):
+            await users.extend_user_subscription_pg(11,1)
+        async with self.pool.acquire() as c:
+            self.assertIsNone(await c.fetchval("SELECT user_id FROM users WHERE user_id=11"))
+            # Simulate orphan state written by an obsolete pre-registration callback.
+            await c.execute("INSERT INTO user_current_family(user_id,family_idx) VALUES(11,123)")
+        self.assertEqual(await users.add_or_update_user_pg(11,"fresh","Fresh","Name",allow_rejoin=True),"rejoined")
+        self.assertEqual(await users.add_or_update_user_pg(11,"stale","Old","Name"),"blocked")
+        async with self.pool.acquire() as c:
+            row=await c.fetchrow("SELECT username,is_subscribed,subscription_count FROM users WHERE user_id=11")
+            self.assertEqual(tuple(row),("fresh",False,0))
+            self.assertIsNone(await c.fetchval("SELECT family_idx FROM user_current_family WHERE user_id=11"))
+        await users.delete_user_and_progress_pg(11)
+        self.assertEqual(await users.add_or_update_user_pg(11,"stale","Old","Name"),"blocked")
+
+    async def test_delete_serializes_with_background_upsert(self):
+        await users.add_or_update_user_pg(11,"old","Old","Name")
+        await asyncio.gather(users.delete_user_and_progress_pg(11),
+            *(users.add_or_update_user_pg(11,"stale","Old","Name") for _ in range(6)))
+        async with self.pool.acquire() as c:
+            self.assertFalse(await c.fetchval("SELECT EXISTS(SELECT 1 FROM users WHERE user_id=11)"))
+        self.assertTrue(await users.has_deletion_marker(11))
+        self.assertEqual(await users.add_or_update_user_pg(33,"new","New","Name"),"registered")

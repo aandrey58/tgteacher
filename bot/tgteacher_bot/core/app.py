@@ -132,18 +132,17 @@ def clear_stage_user_data(context):
 @track_metrics
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await mark_user_active_if_needed(user_id, context)
     username = update.effective_user.username or ""
     first_name = update.effective_user.first_name or ""
     last_name = update.effective_user.last_name or ""
-    await add_or_update_user_pg(user_id, username, first_name, last_name)
-
-    try:
-        from tgteacher_bot.services.legacy.legacy_users_collector import save_user_to_legacy_file
-
-        save_user_to_legacy_file(user_id, username, first_name, last_name)
-    except Exception as e:
-        logger.error(f"Ошибка при сборе данных пользователя {user_id} в start: {e}")
+    private = bool(update.effective_chat and update.effective_chat.type=="private" and update.effective_chat.id==user_id)
+    registration = await add_or_update_user_pg(user_id, username, first_name, last_name, allow_rejoin=private)
+    if registration=="blocked":
+        await update.message.reply_text("Для повторной регистрации откройте личный чат с ботом и отправьте /start.")
+        return
+    if registration=="rejoined":
+        context.user_data.clear()
+    await mark_user_active_if_needed(user_id, context)
 
     if first_name:
         welcome_text = (

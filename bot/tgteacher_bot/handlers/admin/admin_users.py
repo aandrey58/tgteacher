@@ -643,11 +643,12 @@ async def admin_delete_user_callback(update: Update, context: ContextTypes.DEFAU
     user_id = int(query.data.replace('admin_delete_user_', ''))
     from tgteacher_bot.db.user_repo import delete_user_and_progress_pg
     await delete_user_and_progress_pg(user_id)
+    context.application.drop_user_data(user_id)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton('⬅️ К списку пользователей', callback_data='admin_users_all')]
     ])
     await query.edit_message_text(
-        f'🗑️ Пользователь <b>{user_id}</b> и все связанные с ним данные были успешно удалены.',
+        f'🗑️ Пользователь <b>{user_id}</b> и учебный прогресс удалены. Финансовая история сохраняется; повторная регистрация возможна через /start.',
         reply_markup=keyboard,
         parse_mode='HTML'
     )

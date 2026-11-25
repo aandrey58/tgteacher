@@ -220,6 +220,13 @@ async def init_db_pg():
                     last_active_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 );
             ''')
+            # Keep a minimal durable deletion marker to reject replayed legacy imports.
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS deleted_learner_markers (
+                    user_id BIGINT PRIMARY KEY,
+                    deleted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
             # Добавляем столбец для даты окончания подписки, если его нет
             await conn.execute('''
                 ALTER TABLE users
@@ -718,52 +725,35 @@ async def get_all_user_completed_tasks_counts(user_id: int, family_ids: List[int
         return results 
 
 @track_db_errors
-async def add_or_update_user_pg(user_id: int, username: str, first_name: str, last_name: str):
+async def add_or_update_user_pg(user_id: int, username: str, first_name: str, last_name: str, *, allow_rejoin=False):
+    """Serialize registration with deletion; only an explicit private /start may rejoin."""
+    from tgteacher_bot.db.srs_repo import lock_user
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Сначала проверяем существующего пользователя
-        existing_user = await conn.fetchrow('''
-            SELECT username, first_name, last_name
-            FROM users
-            WHERE user_id = $1
-        ''', user_id)
-        
-        if existing_user:
-            # Пользователь существует - обновляем только измененные поля
-            update_fields = []
-            update_values = []
-            param_count = 1
-            
-            if existing_user['username'] != username:
-                update_fields.append(f"username = ${param_count}")
-                update_values.append(username)
-                param_count += 1
-                
-            if existing_user['first_name'] != first_name:
-                update_fields.append(f"first_name = ${param_count}")
-                update_values.append(first_name)
-                param_count += 1
-                
-            if existing_user['last_name'] != last_name:
-                update_fields.append(f"last_name = ${param_count}")
-                update_values.append(last_name)
-                param_count += 1
-            
-            # Обновляем только если есть изменения
-            if update_fields:
-                query = f'''
-                    UPDATE users 
-                    SET {', '.join(update_fields)}
-                    WHERE user_id = ${param_count}
-                '''
-                update_values.append(user_id)
-                await conn.execute(query, *update_values)
-        else:
-            # Пользователя нет - вставляем нового
-            await conn.execute('''
-                INSERT INTO users (user_id, username, first_name, last_name)
-                VALUES ($1, $2, $3, $4)
-            ''', user_id, username, first_name, last_name)
+        async with conn.transaction():
+            await lock_user(conn,user_id)
+            deleted = await conn.fetchval("SELECT 1 FROM deleted_learner_markers WHERE user_id=$1",user_id)
+            if deleted and not allow_rejoin:
+                return "blocked"
+            exists = await conn.fetchval("SELECT 1 FROM users WHERE user_id=$1",user_id)
+            if deleted and not exists:
+                # Remove any orphan progress left by old callbacks before a fresh registration.
+                await _delete_learner_data(conn,user_id)
+            await conn.execute("""
+                INSERT INTO users(user_id,username,first_name,last_name)
+                VALUES($1,$2,$3,$4)
+                ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,
+                    first_name=excluded.first_name,last_name=excluded.last_name
+                WHERE (users.username,users.first_name,users.last_name)
+                    IS DISTINCT FROM (excluded.username,excluded.first_name,excluded.last_name)
+            """,user_id,username,first_name,last_name)
+            return "rejoined" if deleted and not exists else "registered"
+
+
+async def has_deletion_marker(user_id: int):
+    pool=await get_pool()
+    async with pool.acquire() as conn:
+        return bool(await conn.fetchval("SELECT 1 FROM deleted_learner_markers WHERE user_id=$1",user_id))
 
 @track_db_errors
 async def get_user_subscription_info_pg(user_id: int) -> Dict[str, Any]:
@@ -793,8 +783,14 @@ async def extend_user_subscription_pg(user_id: int, months: int):
     if type(months) is not int or not 1<=months<=60:
         raise ValueError("Invalid subscription duration")
     pool = await get_pool()
+    from tgteacher_bot.db.srs_repo import lock_user
     async with pool.acquire() as conn:
-        await conn.execute("""INSERT INTO users(user_id,subscription_until,subscription_count,is_subscribed)
+        async with conn.transaction():
+            await lock_user(conn,user_id)
+            if await conn.fetchval("""SELECT 1 FROM deleted_learner_markers d
+                WHERE d.user_id=$1 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.user_id=d.user_id)""",user_id):
+                raise ValueError("Deleted learner must register again")
+            await conn.execute("""INSERT INTO users(user_id,subscription_until,subscription_count,is_subscribed)
             VALUES($1,now()+make_interval(days=>$2::int),$3,true)
             ON CONFLICT(user_id) DO UPDATE SET
                 subscription_until=CASE WHEN users.is_subscribed IS TRUE AND users.subscription_until IS NULL THEN NULL
@@ -835,6 +831,20 @@ async def get_family_stage_answers_stats_pg(family_id: int) -> List[Dict[str, An
         ''', family_id)
         return [dict(row) for row in rows] 
 
+async def _delete_learner_data(conn,user_id):
+    await conn.execute('DELETE FROM learner_tokens WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM srs_cards WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM learner_answer_events WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM user_family_progress WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM user_task_progress WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM user_last_opened_family_place WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM user_stage_state WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM user_current_family WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM family_version_learner_history WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM legacy_unmapped_progress WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM users WHERE user_id = $1', user_id)
+
+
 @track_db_errors
 async def delete_user_and_progress_pg(user_id: int):
     pool = await get_pool()
@@ -842,19 +852,9 @@ async def delete_user_and_progress_pg(user_id: int):
         async with conn.transaction():
             from tgteacher_bot.db.srs_repo import lock_user
             await lock_user(conn, user_id)
-            await conn.execute('DELETE FROM learner_tokens WHERE user_id = $1', user_id)
-            await conn.execute('DELETE FROM srs_cards WHERE user_id = $1', user_id)
-            await conn.execute('DELETE FROM learner_answer_events WHERE user_id = $1', user_id)
-            # Удаляем прогресс по всем группам слов
-            await conn.execute('DELETE FROM user_family_progress WHERE user_id = $1', user_id)
-            await conn.execute('DELETE FROM user_task_progress WHERE user_id = $1', user_id)
-            await conn.execute('DELETE FROM user_last_opened_family_place WHERE user_id = $1', user_id)
-            await conn.execute('DELETE FROM user_stage_state WHERE user_id = $1', user_id)
-            await conn.execute('DELETE FROM user_current_family WHERE user_id = $1', user_id)
-            # Удаляем самого пользователя
-            await conn.execute('DELETE FROM family_version_learner_history WHERE user_id = $1', user_id)
-            await conn.execute('DELETE FROM legacy_unmapped_progress WHERE user_id = $1', user_id)
-            await conn.execute('DELETE FROM users WHERE user_id = $1', user_id) 
+            await conn.execute("""INSERT INTO deleted_learner_markers(user_id) VALUES($1)
+                ON CONFLICT(user_id) DO UPDATE SET deleted_at=now()""",user_id)
+            await _delete_learner_data(conn,user_id)
 
 @track_db_errors
 async def set_family_finished_pg(user_id: int, family_idx: int):

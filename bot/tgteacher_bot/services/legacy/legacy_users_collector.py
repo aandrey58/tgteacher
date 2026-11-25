@@ -2,7 +2,7 @@ import json
 import os
 import logging
 from typing import Dict, List, Any
-from tgteacher_bot.db.user_repo import add_or_update_user_pg
+from tgteacher_bot.db.user_repo import add_or_update_user_pg, has_deletion_marker
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -69,12 +69,14 @@ async def process_legacy_users_job(context):
                 user_id = int(user_id_str)
                 # MCP: add_or_update_user_pg использует ON CONFLICT DO UPDATE, 
                 # поэтому если пользователь уже есть в базе, его данные просто обновятся
-                await add_or_update_user_pg(
+                result = await add_or_update_user_pg(
                     user_id=user_id,
                     username=user_info['username'],
                     first_name=user_info['first_name'],
                     last_name=user_info['last_name']
                 )
+                if result=="blocked":
+                    continue
                 processed_count += 1
                 logger.info(f"Пользователь {user_id} успешно добавлен/обновлен в базе")
                 
@@ -106,6 +108,8 @@ async def collect_context_users_job(context):
                 user_id = int(user_id_str)
                 # Собираем только если есть какие-то данные пользователя
                 if user_data:
+                    if await has_deletion_marker(user_id):
+                        continue
                     # Пытаемся получить данные пользователя из Telegram API
                     try:
                         chat_member = await context.application.bot.get_chat_member(user_id, user_id)
