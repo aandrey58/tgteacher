@@ -17,7 +17,9 @@ services:
       retries: 20
 
   bot:
-    build: .
+    build:
+      context: .
+      target: bot-runtime
     restart: unless-stopped
     cap_drop:
       - ALL

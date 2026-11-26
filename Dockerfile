@@ -13,7 +13,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 COPY requirements.lock /app/requirements.lock
 RUN pip install --no-cache-dir --require-hashes -r /app/requirements.lock && pip check
 
-COPY . /app
+COPY bot /app/bot
 RUN groupadd --gid 10001 tgteacher && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin tgteacher
 ENV HOME=/home/tgteacher
 RUN mkdir -p /app/runtime_cache /app/bot/exports /app/families && chown 10001:10001 /app/runtime_cache /app/bot/exports /app/families
@@ -21,6 +21,12 @@ FROM base AS migrator
 USER 10001:10001
 CMD ["python", "-m", "tgteacher_bot.db.provision_roles"]
 
+FROM base AS bot-runtime
+USER 10001:10001
+CMD ["python", "bot/main.py"]
+
+# Media-authoring services need FFmpeg for non-MP3 TTS responses.
+# Keep the default target compatible with existing standalone builds.
 FROM base AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*

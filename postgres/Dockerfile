@@ -1,5 +1,5 @@
 # Build the same upstream gosu release using a patched Go toolchain.
-FROM golang:1.27.4-trixie AS gosu-builder
+FROM golang:1.27.4-trixie@sha256:430985542100b871e108ccc00e8dcc5eef08ca14ee5825e98ebf563d8ffec4ee AS gosu-builder
 ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOBIN=/out
 RUN go install -trimpath github.com/tianon/gosu@29b939aa5bd4dc588af765b8248f6e39150d2565 \
     && go version -m /out/gosu | grep -F 'go1.27.4' \

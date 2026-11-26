@@ -112,11 +112,41 @@ jobs:
           docker compose --profile web exec -T admin python - < tests/smoke_db_roles.py
       - name: Verify patched OS packages and minimal migration image
         run: |
-          for service in bot mcp admin; do
+          for service in mcp admin; do
             docker compose --profile web run --rm --no-deps "$service" sh -ec 'dpkg --compare-versions "$(dpkg-query -W libzstd1 | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"; ffmpeg -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=0.1 -c:a libopus -f ogg -y /tmp/smoke.ogg; ffprobe -v error /tmp/smoke.ogg; rm /tmp/smoke.ogg'
           done
-          docker compose --profile migration run --rm --no-deps db-migrate sh -ec 'if command -v ffmpeg; then exit 1; fi; test "$(id -u)" = 10001'
+          for service in bot db-migrate; do
+            docker compose --profile migration run --rm --no-deps "$service" sh -ec 'if command -v ffmpeg || command -v ffprobe; then exit 1; fi; test "$(id -u)" = 10001; dpkg --compare-versions "$(dpkg-query -W libzstd1 | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"'
+          done
           docker compose exec -T db sh -ec 'dpkg --compare-versions "$(dpkg-query -W libzstd1 | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"; dpkg --compare-versions "$(dpkg-query -W zstd | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"'
+      - name: Verify media authoring and bot audio reading in their actual containers
+        run: |
+          for service in mcp admin; do
+            docker compose --profile web run --rm --no-deps -T "$service" python - <<'PY'
+          import asyncio
+          from tgteacher_bot.services.tts_providers import convert_mp3, check_mp3
+          data = asyncio.run(convert_mp3(bytes(24000 * 2), "pcm", 24000, 1))
+          assert check_mp3(data) == data
+          PY
+          done
+          docker compose run --rm --no-deps -T bot python - <<'PY'
+          import asyncio
+          import shutil
+          from unittest.mock import AsyncMock, MagicMock, patch
+          from tgteacher_bot.db import tts_repo
+          from tgteacher_bot.handlers.user import stage_7
+          assert shutil.which("ffmpeg") is None
+          assert shutil.which("ffprobe") is None
+          assert stage_7.get_audio_bytes is tts_repo.get_audio_bytes
+          conn = MagicMock()
+          conn.fetchval = AsyncMock(return_value=b"synthetic-stored-audio")
+          pool = MagicMock()
+          pool.acquire.return_value.__aenter__.return_value = conn
+          with patch.object(tts_repo, "get_pool", new=AsyncMock(return_value=pool)):
+              result = asyncio.run(tts_repo.get_audio_bytes("tts-" + "a"*64 + ".mp3"))
+          assert result == b"synthetic-stored-audio"
+          conn.fetchval.assert_awaited_once()
+          PY
       - name: Verify PostgreSQL privilege drop and rebuilt gosu
         run: |
           docker compose exec -T db gosu --version | grep -F 'go1.27.4'
