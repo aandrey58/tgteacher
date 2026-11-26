@@ -113,10 +113,10 @@ jobs:
       - name: Verify patched OS packages and minimal migration image
         run: |
           for service in bot mcp admin; do
-            docker compose --profile web run --rm --no-deps "$service" sh -ec 'dpkg --compare-versions "$(dpkg-query -W -f=\'\${Version}\' libzstd1)" ge "1.5.7+dfsg-1+deb13u1"; ffmpeg -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=0.1 -c:a libopus -f ogg -y /tmp/smoke.ogg; ffprobe -v error /tmp/smoke.ogg; rm /tmp/smoke.ogg'
+            docker compose --profile web run --rm --no-deps "$service" sh -ec 'dpkg --compare-versions "$(dpkg-query -W libzstd1 | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"; ffmpeg -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=0.1 -c:a libopus -f ogg -y /tmp/smoke.ogg; ffprobe -v error /tmp/smoke.ogg; rm /tmp/smoke.ogg'
           done
           docker compose --profile migration run --rm --no-deps db-migrate sh -ec 'if command -v ffmpeg; then exit 1; fi; test "$(id -u)" = 10001'
-          docker compose exec -T db sh -ec 'dpkg --compare-versions "$(dpkg-query -W -f=\'\${Version}\' libzstd1)" ge "1.5.7+dfsg-1+deb13u1"; dpkg --compare-versions "$(dpkg-query -W -f=\'\${Version}\' zstd)" ge "1.5.7+dfsg-1+deb13u1"'
+          docker compose exec -T db sh -ec 'dpkg --compare-versions "$(dpkg-query -W libzstd1 | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"; dpkg --compare-versions "$(dpkg-query -W zstd | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"'
       - name: Seed synthetic screenshot data
         run: docker compose --profile web exec -T admin python - < tests/seed_web_demo.py
       - uses: actions/setup-node@v4
