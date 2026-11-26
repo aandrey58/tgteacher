@@ -15,5 +15,5 @@ yookassa>=3.0.0
 mcp>=1.26,<2
 uvicorn>=0.34
 mutagen>=1.47,<2
-Pillow>=11.3,<13
+Pillow==13.0.0
 fsrs==6.3.1

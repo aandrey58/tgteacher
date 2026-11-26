@@ -116,6 +116,8 @@ jobs:
           if n.exists():
               obj=json.loads(n.read_text())
               print("npm severities:",obj.get("metadata",{}).get("vulnerabilities",{}))
+              for name,vuln in sorted(obj.get("vulnerabilities",{}).items()):
+                  print("npm",name,vuln.get("severity"),"affected:",vuln.get("range"),"fix:",vuln.get("fixAvailable"))
           PY
           exit "$status"
       - uses: actions/upload-artifact@v4
