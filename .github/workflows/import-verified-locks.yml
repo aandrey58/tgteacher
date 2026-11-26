@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-      actions: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,12 +21,13 @@ jobs:
       - name: Validate source run and import exact audited artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_PARENT: 0a7e767c6f76395a2d864548a2cdce1fd8928ac8
+          EXPECTED_PARENT: 4ed09566f15820c4ae617ce5b1271a4abb1259bb
+          AUDITED_SHA: 0a7e767c6f76395a2d864548a2cdce1fd8928ac8
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
-          test "$(gh run view 45728975647 --json headSha,conclusion --jq '.headSha + " " + .conclusion')" = "$EXPECTED_PARENT success"
+          test "$(gh run view 45728975647 --json headSha,conclusion --jq '.headSha + " " + .conclusion')" = "$AUDITED_SHA success"
           test ! -e requirements.lock
           test ! -e admin-web/package-lock.json
           target="$(mktemp -d)"
@@ -54,28 +55,11 @@ jobs:
           replace("admin-web/Dockerfile","COPY admin-web/package.json ./\nRUN npm install --no-audit --no-fund","COPY admin-web/package.json admin-web/package-lock.json ./\nRUN npm ci --no-audit --no-fund")
           replace("admin-web/Dockerfile","COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt","COPY requirements.lock .\nRUN pip install --no-cache-dir --require-hashes -r requirements.lock && pip check")
           replace(".dockerignore","!requirements.txt","!requirements.txt\n!requirements.lock")
-          wf=".github/workflows/english-content-tests.yml"
-          replace(wf,"run: python -m pip install -r requirements.txt","run: python -m pip install --require-hashes -r requirements.lock && python -m pip check")
-          replace(wf,"npm install --no-audit --no-fund","npm ci --no-audit --no-fund")
-          wf=".github/workflows/security-audit.yml"
-          replace(wf,"Generate or use resolved dependency locks","Require committed resolved dependency locks")
-          p=Path(wf)
-          s=p.read_text()
-          begin=s.index("          if [ ! -f requirements.lock ]; then")
-          end=s.index('          cp requirements.lock',begin)
-          s=s[:begin]+"          test -s requirements.lock\n          test -s admin-web/package-lock.json\n"+s[end:]
-          p.write_text(s)
-          for name in ("docs/RELEASE_RUNBOOK.md","docs/STAGE_10_RELEASE_AUDIT.md"):
-              p=Path(name)
-              with p.open("a") as f:
-                  f.write("\n\n## BUILD-01: verified lock enforcement\n\nImported exact artifacts from successful audit 45728975647 after SHA-256 verification. Python and npm locks are committed; Docker and regression CI use hash-verified pip and npm ci without an unlocked fallback. Python and Node base images are pinned to digests observed in release-smoke 45728975721. Regenerate locks deliberately on Python 3.12 / Node 22 and review the security audit before committing changes. PostgreSQL image digest, apt package reproducibility and OS/container CVE scan remain open. Do not treat this as bit-for-bit build reproducibility. New CI confirmation and staging acceptance are required.\n")
           PY
-          git rm .github/workflows/import-verified-locks.yml
-          git add requirements.lock admin-web/package-lock.json Dockerfile admin-web/Dockerfile .dockerignore .github/workflows/english-content-tests.yml .github/workflows/security-audit.yml docs/RELEASE_RUNBOOK.md docs/STAGE_10_RELEASE_AUDIT.md
+          git add requirements.lock admin-web/package-lock.json Dockerfile admin-web/Dockerfile .dockerignore
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Enforce exact audited Python and npm locks; pin application base image digests"
           git push origin HEAD:refs/heads/english-adaptation
-          # GITHUB_TOKEN pushes do not start normal push workflows. Dispatch explicitly.
-          gh workflow run english-content-tests.yml --ref english-adaptation
-          gh workflow run security-audit.yml --ref english-adaptation
+          # Workflow files are intentionally untouched; the repository maintainer
+          # will enforce the same locks in CI and remove this one-time workflow.
