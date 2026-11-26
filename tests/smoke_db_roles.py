@@ -13,7 +13,8 @@ async def main():
         assert await c.fetchval("SELECT current_user") == ROLES[service]
         assert not await c.fetchval("SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls FROM pg_roles WHERE rolname=current_user")
         await c.fetchval("SELECT count(*) FROM families")
-        forbidden = ["CREATE TABLE public.runtime_ddl_probe(id integer)", "CREATE TEMP TABLE runtime_temp_probe(id integer)", "UPDATE runtime_schema_release SET version=0"]
+        assert await c.fetchval("SELECT 1 FROM content_schema_migrations WHERE name='srs_v1'")
+        forbidden = ["CREATE TABLE public.runtime_ddl_probe(id integer)", "CREATE TEMP TABLE runtime_temp_probe(id integer)", "UPDATE runtime_schema_release SET version=0", "DELETE FROM content_schema_migrations WHERE false"]
         if service != "admin":
             forbidden.append("SELECT count(*) FROM web_admin_accounts")
         if service == "mcp":

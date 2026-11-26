@@ -19,7 +19,7 @@ OPERATIONS = set("web_support web_campaigns web_deliveries web_message_attachmen
 FINANCE = {"payments", "payment_orders", "payment_refund_observations", "stars_orders"}
 AUTH = {"web_admin_accounts", "web_admin_sessions", "web_admin_audit"}
 VIEWS = {"active_task_positions", "active_user_task_progress"}
-COMMON_READ = VIEWS | {"runtime_schema_release"}
+COMMON_READ = VIEWS | {"runtime_schema_release", "content_schema_migrations"}
 WRITES = {
     "bot": CONTENT | PROGRESS | LEARNERS | OPERATIONS | FINANCE | {"system_snapshots"},
     "admin": CONTENT | PROGRESS | LEARNERS | OPERATIONS | AUTH | {"payments"},
