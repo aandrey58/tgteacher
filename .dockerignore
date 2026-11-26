@@ -1,6 +1,7 @@
 **
 !Dockerfile
 !requirements.txt
+!requirements.lock
 !bot/
 !bot/main.py
 !bot/scripts/
