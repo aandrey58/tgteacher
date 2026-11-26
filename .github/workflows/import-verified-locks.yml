@@ -1,0 +1,81 @@
+name: Import verified dependency locks (one-time)
+on:
+  push:
+    branches: [english-adaptation]
+    paths: [.github/workflows/import-verified-locks.yml]
+permissions:
+  contents: read
+jobs:
+  import-locks:
+    if: github.ref == 'refs/heads/english-adaptation' && github.repository == 'aandrey58/tgteacher'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: english-adaptation
+          fetch-depth: 2
+      - name: Validate source run and import exact audited artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_PARENT: 0a7e767c6f76395a2d864548a2cdce1fd8928ac8
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(gh run view 45728975647 --json headSha,conclusion --jq '.headSha + " " + .conclusion')" = "$EXPECTED_PARENT success"
+          test ! -e requirements.lock
+          test ! -e admin-web/package-lock.json
+          target="$(mktemp -d)"
+          gh run download 45728975647 --name dependency-locks-and-audit --dir "$target"
+          (
+            cd "$target"
+            printf '%s\n' 'd11f707867296dc3fcdffff3f326cbff25c7a419a174ec4ccf69cbcbd4b879a7  requirements.lock' '0bc534681e7052b170c6929df565dafa96d9903b0f7f54c755f915873d7fca6e  package-lock.json' | sha256sum --check --strict
+          )
+          cp "$target/requirements.lock" requirements.lock
+          cp "$target/package-lock.json" admin-web/package-lock.json
+          python - <<'PY'
+          from pathlib import Path
+          def replace(path, old, new):
+              p=Path(path)
+              s=p.read_text()
+              if s.count(old)!=1:
+                  raise RuntimeError("Unexpected source: "+path)
+              p.write_text(s.replace(old,new))
+          py="python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b"
+          node="node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a"
+          for file in ("Dockerfile","admin-web/Dockerfile"):
+              replace(file,"FROM python:3.12-slim","FROM "+py)
+          replace("Dockerfile","COPY requirements.txt /app/requirements.txt\nRUN pip install --no-cache-dir -r /app/requirements.txt","COPY requirements.lock /app/requirements.lock\nRUN pip install --no-cache-dir --require-hashes -r /app/requirements.lock && pip check")
+          replace("admin-web/Dockerfile","FROM node:22-alpine AS ui","FROM "+node+" AS ui")
+          replace("admin-web/Dockerfile","COPY admin-web/package.json ./\nRUN npm install --no-audit --no-fund","COPY admin-web/package.json admin-web/package-lock.json ./\nRUN npm ci --no-audit --no-fund")
+          replace("admin-web/Dockerfile","COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt","COPY requirements.lock .\nRUN pip install --no-cache-dir --require-hashes -r requirements.lock && pip check")
+          replace(".dockerignore","!requirements.txt","!requirements.txt\n!requirements.lock")
+          wf=".github/workflows/english-content-tests.yml"
+          replace(wf,"run: python -m pip install -r requirements.txt","run: python -m pip install --require-hashes -r requirements.lock && python -m pip check")
+          replace(wf,"npm install --no-audit --no-fund","npm ci --no-audit --no-fund")
+          wf=".github/workflows/security-audit.yml"
+          replace(wf,"Generate or use resolved dependency locks","Require committed resolved dependency locks")
+          p=Path(wf)
+          s=p.read_text()
+          begin=s.index("          if [ ! -f requirements.lock ]; then")
+          end=s.index('          cp requirements.lock',begin)
+          s=s[:begin]+"          test -s requirements.lock\n          test -s admin-web/package-lock.json\n"+s[end:]
+          p.write_text(s)
+          for name in ("docs/RELEASE_RUNBOOK.md","docs/STAGE_10_RELEASE_AUDIT.md"):
+              p=Path(name)
+              with p.open("a") as f:
+                  f.write("\n\n## BUILD-01: verified lock enforcement\n\nImported exact artifacts from successful audit 45728975647 after SHA-256 verification. Python and npm locks are committed; Docker and regression CI use hash-verified pip and npm ci without an unlocked fallback. Python and Node base images are pinned to digests observed in release-smoke 45728975721. Regenerate locks deliberately on Python 3.12 / Node 22 and review the security audit before committing changes. PostgreSQL image digest, apt package reproducibility and OS/container CVE scan remain open. Do not treat this as bit-for-bit build reproducibility. New CI confirmation and staging acceptance are required.\n")
+          PY
+          git rm .github/workflows/import-verified-locks.yml
+          git add requirements.lock admin-web/package-lock.json Dockerfile admin-web/Dockerfile .dockerignore .github/workflows/english-content-tests.yml .github/workflows/security-audit.yml docs/RELEASE_RUNBOOK.md docs/STAGE_10_RELEASE_AUDIT.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Enforce exact audited Python and npm locks; pin application base image digests"
+          git push origin HEAD:refs/heads/english-adaptation
+          # GITHUB_TOKEN pushes do not start normal push workflows. Dispatch explicitly.
+          gh workflow run english-content-tests.yml --ref english-adaptation
+          gh workflow run security-audit.yml --ref english-adaptation
