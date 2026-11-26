@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:07abc3f43c9395b0bdbbab36bc25ddb0e8d83cd4fcafb5fb7d6abe14ff156dd8
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: testpassword
@@ -50,6 +50,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.isolated.yml
+      COMPOSE_PROJECT_NAME: tgteacher
     steps:
       - uses: actions/checkout@v4
       - name: Prepare isolated smoke credentials
@@ -120,6 +121,66 @@ jobs:
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium webkit
           npx playwright test
+      - name: Scan actual release images for OS and application CVEs
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tgt-image-scan" "$RUNNER_TEMP/tgt-trivy-cache"
+          scanner=aquasec/trivy:0.76.2
+          docker pull "$scanner"
+          docker image inspect "$scanner" --format '{{json .RepoDigests}}'
+          status=0
+          for service in bot mcp admin db-migrate db; do
+            image="tgteacher-$service"
+            if [ "$service" = db ]; then
+              image='postgres:16@sha256:07abc3f43c9395b0bdbbab36bc25ddb0e8d83cd4fcafb5fb7d6abe14ff156dd8'
+            fi
+            docker image inspect "$image" --format '{{.Id}}' > "$RUNNER_TEMP/tgt-image-scan/$service.image-id.txt"
+            docker save "$image" -o "$RUNNER_TEMP/tgt-image-scan/input.tar"
+            rc=0
+            docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+              -v "$RUNNER_TEMP/tgt-image-scan:/scan" \
+              -v "$RUNNER_TEMP/tgt-trivy-cache:/cache" \
+              "$scanner" image --cache-dir /cache --input /scan/input.tar \
+              --scanners vuln --format json --list-all-pkgs --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+              --exit-code 0 --timeout 8m --output "/scan/$service.json" || rc=$?
+            rm -f "$RUNNER_TEMP/tgt-image-scan/input.tar"
+            if [ "$rc" -ne 0 ]; then
+              echo "Scanner execution failed for $service (exit $rc)"
+              status=1
+              continue
+            fi
+            python - "$RUNNER_TEMP/tgt-image-scan/$service.json" <<'PY' || status=1
+          import collections, json, sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          report = json.loads(path.read_text())
+          if not report.get("Results"):
+              raise RuntimeError("No scan targets reported: " + path.name)
+          counts = collections.Counter()
+          for result in report["Results"]:
+              for vuln in result.get("Vulnerabilities") or []:
+                  severity = vuln.get("Severity", "UNKNOWN")
+                  counts[severity] += 1
+                  if severity in {"HIGH", "CRITICAL"}:
+                      print(path.stem, result.get("Type"), vuln.get("VulnerabilityID"),
+                            vuln.get("PkgName"), vuln.get("InstalledVersion"),
+                            "fixed:", vuln.get("FixedVersion") or "none listed", severity)
+          print(path.stem, "severity totals:", dict(counts))
+          sys.exit(int(bool(counts["HIGH"] or counts["CRITICAL"])))
+          PY
+          done
+          exit "$status"
+      - name: Upload container vulnerability reports and package inventories
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-image-vulnerability-audit
+          path: |
+            ${{ runner.temp }}/tgt-image-scan/*.json
+            ${{ runner.temp }}/tgt-image-scan/*.image-id.txt
+          if-no-files-found: ignore
       - name: Upload admin browser evidence
         if: always()
         uses: actions/upload-artifact@v4
