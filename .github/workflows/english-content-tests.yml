@@ -35,7 +35,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install test dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install --require-hashes -r requirements.lock && python -m pip check
       - name: Verify FFmpeg
         run: |
           sudo apt-get update
@@ -117,7 +117,7 @@ jobs:
       - name: Verify responsive React flows in Chromium and WebKit
         working-directory: admin-web
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium webkit
           npx playwright test
       - name: Upload admin browser evidence

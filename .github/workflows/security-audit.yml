@@ -74,17 +74,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Generate or use resolved dependency locks
+      - name: Require committed resolved dependency locks
         run: |
           mkdir -p "$RUNNER_TEMP/tgt-deps"
           python -m venv "$RUNNER_TEMP/tgt-tools"
           "$RUNNER_TEMP/tgt-tools/bin/pip" install 'pip==25.2' 'pip-tools==7.5.2' 'pip-audit==2.9.0'
-          if [ ! -f requirements.lock ]; then
-            "$RUNNER_TEMP/tgt-tools/bin/pip-compile" --generate-hashes --strip-extras --no-emit-index-url --no-emit-trusted-host --output-file=requirements.lock requirements.txt
-          fi
-          if [ ! -f admin-web/package-lock.json ]; then
-            (cd admin-web && npm install --package-lock-only --ignore-scripts --no-audit --no-fund)
-          fi
+          test -s requirements.lock
+          test -s admin-web/package-lock.json
           cp requirements.lock "$RUNNER_TEMP/tgt-deps/requirements.lock"
           cp admin-web/package-lock.json "$RUNNER_TEMP/tgt-deps/package-lock.json"
           sha256sum "$RUNNER_TEMP/tgt-deps/"*.lock "$RUNNER_TEMP/tgt-deps/"*.json
