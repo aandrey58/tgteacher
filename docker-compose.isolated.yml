@@ -2,7 +2,9 @@
 services:
   db-migrate:
     profiles: ["migration"]
-    build: .
+    build:
+      context: .
+      target: migrator
     command: ["python", "-m", "tgteacher_bot.db.provision_roles"]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

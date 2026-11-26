@@ -73,7 +73,7 @@ jobs:
           sudo chmod -R u+rwX runtime_cache bot/exports families
           docker compose config --quiet
       - name: Build release containers
-        run: docker compose build bot mcp
+        run: docker compose build db bot mcp
       - name: Start isolated DB and MCP
         run: |
           docker compose up -d --wait --wait-timeout 120 db
@@ -110,6 +110,13 @@ jobs:
           docker compose run --rm --no-deps -T bot python - < tests/smoke_db_roles.py
           docker compose exec -T mcp python - < tests/smoke_db_roles.py
           docker compose --profile web exec -T admin python - < tests/smoke_db_roles.py
+      - name: Verify patched OS packages and minimal migration image
+        run: |
+          for service in bot mcp admin; do
+            docker compose --profile web run --rm --no-deps "$service" sh -ec 'dpkg --compare-versions "$(dpkg-query -W -f=\'\${Version}\' libzstd1)" ge "1.5.7+dfsg-1+deb13u1"; ffmpeg -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=0.1 -c:a libopus -f ogg -y /tmp/smoke.ogg; ffprobe -v error /tmp/smoke.ogg; rm /tmp/smoke.ogg'
+          done
+          docker compose --profile migration run --rm --no-deps db-migrate sh -ec 'if command -v ffmpeg; then exit 1; fi; test "$(id -u)" = 10001'
+          docker compose exec -T db sh -ec 'dpkg --compare-versions "$(dpkg-query -W -f=\'\${Version}\' libzstd1)" ge "1.5.7+dfsg-1+deb13u1"; dpkg --compare-versions "$(dpkg-query -W -f=\'\${Version}\' zstd)" ge "1.5.7+dfsg-1+deb13u1"'
       - name: Seed synthetic screenshot data
         run: docker compose --profile web exec -T admin python - < tests/seed_web_demo.py
       - uses: actions/setup-node@v4
@@ -134,7 +141,7 @@ jobs:
           for service in bot mcp admin db-migrate db; do
             image="tgteacher-$service"
             if [ "$service" = db ]; then
-              image='postgres:16@sha256:07abc3f43c9395b0bdbbab36bc25ddb0e8d83cd4fcafb5fb7d6abe14ff156dd8'
+              image=tgteacher-postgres:16-patched
             fi
             docker image inspect "$image" --format '{{.Id}}' > "$RUNNER_TEMP/tgt-image-scan/$service.image-id.txt"
             docker save "$image" -o "$RUNNER_TEMP/tgt-image-scan/input.tar"
