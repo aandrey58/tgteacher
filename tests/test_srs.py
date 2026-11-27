@@ -61,6 +61,28 @@ class TelegramTests(unittest.IsolatedAsyncioTestCase):
             issue.assert_not_awaited()
 
 
+    async def test_oauth_confirmation_only_private_and_opt_in(self):
+        from tgteacher_bot.db import learner_oauth as links
+        message = SimpleNamespace(reply_text=AsyncMock())
+        update = SimpleNamespace(effective_chat=SimpleNamespace(id=17,type="group"),effective_user=SimpleNamespace(id=17),
+                                 effective_message=message,callback_query=None)
+        context = SimpleNamespace(args=["a"*32])
+        with patch.object(links,"confirm",new=AsyncMock(return_value=True)) as confirm, patch.object(links,"unlink",new=AsyncMock()) as unlink:
+            with patch.dict(os.environ,{"TGTEACHER_LEARNER_OAUTH_ENABLED":"1"}):
+                await reviews.confirm_oauth_link(update,context)
+                await reviews.unlink_oauth(update,context)
+                confirm.assert_not_awaited()
+                unlink.assert_not_awaited()
+                update.effective_chat.type="private"
+                await reviews.confirm_oauth_link(update,context)
+                confirm.assert_awaited_once_with(17,"a"*32)
+                await reviews.unlink_oauth(update,context)
+                unlink.assert_awaited_once_with(17)
+            with patch.dict(os.environ,{"TGTEACHER_LEARNER_OAUTH_ENABLED":"0"}):
+                await reviews.confirm_oauth_link(update,context)
+                confirm.assert_awaited_once()
+
+
 @unittest.skipUnless(os.getenv("TGTEACHER_TEST_DSN"),"requires PostgreSQL")
 class SRSDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -73,7 +95,8 @@ class SRSDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(admin.execute,f'DROP SCHEMA "{schema}" CASCADE')
         self.pool = await asyncpg.create_pool(dsn,min_size=1,max_size=4,server_settings={"search_path":schema})
         self.addAsyncCleanup(self.pool.close)
-        for module in (srs,versions,families,users,prefs):
+        from tgteacher_bot.db import learner_oauth
+        for module in (srs,versions,families,users,prefs,learner_oauth):
             p = patch.object(module,"get_pool",new=AsyncMock(return_value=self.pool))
             p.start()
             self.addCleanup(p.stop)
@@ -82,6 +105,41 @@ class SRSDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.uid = 11
         await users.add_or_update_user_pg(11,"one","One","")
         await users.add_or_update_user_pg(22,"two","Two","")
+
+    async def test_oauth_link_one_time_expiry_conflicts_revocation_and_deletion(self):
+        from tgteacher_bot.db import learner_oauth as links
+        issuer = "https://auth.example"
+        first = await links.begin(issuer,"first")
+        replacement = await links.begin(issuer,"first")
+        self.assertFalse(await links.confirm(11,first))
+        async with self.pool.acquire() as c:
+            self.assertEqual(await c.fetchval("SELECT code_hash FROM learner_oauth_challenges WHERE subject='first'"),links.digest(replacement))
+            self.assertNotEqual(replacement,links.digest(replacement))
+        self.assertIsNone(await links.resolve(issuer,"first"))
+        attempts = await asyncio.gather(links.confirm(11,replacement),links.confirm(22,replacement))
+        self.assertEqual(sum(attempts),1)
+        uid = 11 if attempts[0] else 22
+        other = 22 if uid == 11 else 11
+        self.assertEqual(await links.resolve(issuer,"first"),uid)
+        self.assertFalse(await links.confirm(other,replacement))
+        with self.assertRaises(ValueError):
+            await links.begin(issuer,"first")
+        second = await links.begin(issuer,"second")
+        self.assertFalse(await links.confirm(uid,second))
+        self.assertIsNone(await links.resolve(issuer,"second"))
+        self.assertFalse(await links.confirm(other,second))
+        expired = await links.begin(issuer,"expired")
+        async with self.pool.acquire() as c:
+            await c.execute("UPDATE learner_oauth_challenges SET expires_at=now()-interval '1 second' WHERE subject='expired'")
+        self.assertFalse(await links.confirm(other,expired))
+        self.assertTrue(await links.unlink(uid))
+        self.assertIsNone(await links.resolve(issuer,"first"))
+        code = await links.begin(issuer,"first")
+        self.assertTrue(await links.confirm(uid,code))
+        await users.delete_user_and_progress_pg(uid)
+        self.assertIsNone(await links.resolve(issuer,"first"))
+        code = await links.begin(issuer,"first")
+        self.assertFalse(await links.confirm(uid,code))
 
     async def enroll(self,uid=11,pos=0):
         await users.set_task_done_pg(uid,self.fid,1,pos)

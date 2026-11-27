@@ -151,3 +151,8 @@ Run 45734100866 confirmed gosu 1.20 built with Go 1.27.4 and removed all 26 Go H
 ## AUTH-01: content resource-server hardening
 
 Require issuer, audience, active state, expiry, subject, client ID, optional nbf and token type checks; enforce scope hierarchy and deny mixed learner/content grants. Namespace OAuth identities, verify configuration matches advertised resource/issuer and restrict learner authorization to locally verified Telegram tokens. Add mocked introspection and actual MCP HTTP negative authorization tests. No external OAuth learner binding or live identity-provider verification yet; AUTH-01 remains open for real staging integration and an independently authenticated subject-to-Telegram linking design. The existing strict container vulnerability gate is unchanged; latest scan 45785188760 reported 856 HIGH and 21 CRITICAL records, with no listed fixes. Production is not approved.
+
+
+## AUTH-01: opt-in learner identity binding
+
+Add learner_oauth_links and learner_oauth_challenges, schema fence v2 and service-specific database grants. New MCP tool begin_learner_link issues a one-time challenge from a validated OAuth subject; only the private Telegram command /review_link confirms it. No identity is accepted from tool parameters. Unique bindings, hashed 10-minute challenges, replacement/expiry/replay checks, account deletion cascade and /review_unlink protect the mapping. Feature remains disabled in both example environments; mixed content/learner scopes are denied. Add real PostgreSQL and HTTP tests, plus private Telegram handler and role isolation smoke. Live OAuth/ChatGPT acceptance and production approval remain open, including unresolved container advisories.

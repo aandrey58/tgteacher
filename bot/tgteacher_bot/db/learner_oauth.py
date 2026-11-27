@@ -18,6 +18,10 @@ def digest(code):
     return hashlib.sha256(code.encode("ascii")).hexdigest()
 
 
+async def lock_subject(conn, issuer, subject):
+    await conn.execute("SELECT pg_advisory_xact_lock(847233,hashtext($1))", issuer+"\n"+subject)
+
+
 async def resolve(issuer, subject):
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -32,6 +36,7 @@ async def begin(issuer, subject):
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("DELETE FROM learner_oauth_challenges WHERE expires_at<=now()")
+            await lock_subject(conn, issuer, subject)
             if await conn.fetchval("SELECT 1 FROM learner_oauth_links WHERE issuer=$1 AND subject=$2", issuer, subject):
                 raise ValueError("Already linked; unlink in the Telegram bot first")
             await conn.execute("""
@@ -51,6 +56,10 @@ async def confirm(uid, code):
             await lock_user(conn, uid)
             if not await conn.fetchval("SELECT 1 FROM users WHERE user_id=$1", uid):
                 return False
+            candidate = await conn.fetchrow("SELECT issuer,subject FROM learner_oauth_challenges WHERE code_hash=$1 AND expires_at>now()", digest(code))
+            if not candidate:
+                return False
+            await lock_subject(conn, candidate["issuer"], candidate["subject"])
             challenge = await conn.fetchrow("""
                 DELETE FROM learner_oauth_challenges WHERE code_hash=$1 AND expires_at>now()
                 RETURNING issuer,subject
@@ -70,7 +79,9 @@ async def unlink(uid):
     async with pool.acquire() as conn:
         async with conn.transaction():
             await lock_user(conn, uid)
-            link = await conn.fetchrow("DELETE FROM learner_oauth_links WHERE user_id=$1 RETURNING issuer,subject", uid)
+            link = await conn.fetchrow("SELECT issuer,subject FROM learner_oauth_links WHERE user_id=$1", uid)
             if link:
+                await lock_subject(conn, link["issuer"], link["subject"])
+                await conn.execute("DELETE FROM learner_oauth_links WHERE user_id=$1", uid)
                 await conn.execute("DELETE FROM learner_oauth_challenges WHERE issuer=$1 AND subject=$2", link["issuer"], link["subject"])
             return bool(link)

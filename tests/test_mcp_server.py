@@ -112,6 +112,43 @@ class OAuthHTTPTests(unittest.TestCase):
                 self.assertEqual(call(client,"get_content_format").status_code,401)
 
 
+    def test_opt_in_oauth_linking_and_bound_scope_isolation(self):
+        from tgteacher_bot.db import learner_oauth as links, srs_repo
+        resource, issuer = "https://teacher.example/mcp", "https://auth.example"
+        verifier = IntrospectionTokenVerifier(issuer+"/introspect", "service", "secret", resource, issuer, learner_enabled=True)
+        server = build_server(verifier, resource, issuer)
+        claims = {"active": True, "iss": issuer, "sub": "opaque-subject-222", "client_id": "learner:999",
+                  "aud": resource, "exp": int(time.time())+600, "scope":"learner:read learner:link"}
+        headers = {"Accept":"application/json, text/event-stream", "MCP-Protocol-Version":"2025-06-18", "Authorization":"Bearer opaque-token"}
+        def response(data):
+            return httpx.Response(200, json=data, request=httpx.Request("POST", verifier.url))
+        def call(client, name, args=None):
+            return client.post("/mcp", headers=headers, json={"jsonrpc":"2.0","id":1,"method":"tools/call",
+                "params":{"name":name,"arguments":args or {}}})
+        with TestClient(server.streamable_http_app(), base_url="https://teacher.example") as client:
+            with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response(claims))), patch.object(links,"resolve",new=AsyncMock(return_value=None)) as resolve, patch.object(links,"begin",new=AsyncMock(return_value="a"*32)) as begin, patch.object(srs_repo,"learning_progress",new=AsyncMock(return_value={"items":[]})) as progress:
+                self.assertTrue(call(client,"get_learning_progress").json()["result"]["isError"])
+                self.assertTrue(call(client,"begin_learner_link",{"confirm":False}).json()["result"]["isError"])
+                begin.assert_not_awaited()
+                result = call(client,"begin_learner_link",{"confirm":True}).json()["result"]
+                self.assertFalse(result.get("isError",False),result)
+                self.assertIn("/review_link "+"a"*32,str(result))
+                begin.assert_awaited_once_with(issuer,claims["sub"])
+                progress.assert_not_awaited()
+                resolve.return_value = 222
+                result = call(client,"get_learning_progress").json()["result"]
+                self.assertFalse(result.get("isError",False),result)
+                progress.assert_awaited_once_with(222,30,0)
+                self.assertTrue(call(client,"get_content_format").json()["result"]["isError"])
+                self.assertTrue(call(client,"begin_learner_link",{"confirm":True}).json()["result"]["isError"])
+                self.assertTrue(call(client,"update_learning_preferences",{"expected_revision":0,"patch":{"daily_review_goal":30},"confirm":True}).json()["result"]["isError"])
+                resolve.return_value = None
+                self.assertTrue(call(client,"get_learning_progress").json()["result"]["isError"])
+            for scope in ("learner:read content:read", "learner:link", "learner:edit"):
+                with patch("httpx.AsyncClient.post",new=AsyncMock(return_value=response({**claims,"scope":scope}))):
+                    self.assertEqual(call(client,"get_learning_progress").status_code,401)
+
+
 class HTTPTests(unittest.TestCase):
     def setUp(self):
         server = build_server(StaticTokenVerifier(READER, EDITOR, PUBLISHER))
