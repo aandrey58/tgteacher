@@ -1,6 +1,6 @@
 # TGTeacher MCP v1.0 — approved roadmap
 
-Target: **45 distinct MCP tools**. Stage 7 establishes all 45 implemented tools; none remain planned, not exposed as placeholders.
+Stage 7 established 45 tools. AUTH-01 adds one opt-in OAuth linking tool, for **46 implemented MCP tools**.
 
 | # | Tool | Stage | Status | Purpose |
 |---:|---|---|---|---|
@@ -49,6 +49,7 @@ Target: **45 distinct MCP tools**. Stage 7 establishes all 45 implemented tools;
 | 43 | `get_due_reviews` | Stage 6 — SRS | implemented | Get scheduled reviews |
 | 44 | `get_learner_profile` | Stage 7 — Adaptive Learning | implemented | Read authorized learner profile |
 | 45 | `update_learning_preferences` | Stage 7 — Adaptive Learning | implemented | Update authorized learning preferences |
+| 46 | `begin_learner_link` | AUTH-01 | implemented | Issue one-time OAuth linking command |
 
 ## Milestones
 
@@ -60,10 +61,11 @@ Target: **45 distinct MCP tools**. Stage 7 establishes all 45 implemented tools;
 | Stage 5 | 39 |
 | Stage 6 | 43 |
 | Stage 7 | 45 |
+| AUTH-01 | 46 |
 
 ## Contract and security
 
-- Current scopes: content:read, content:edit, content:publish, learner:read, learner:edit. Telegram-linked learner credentials grant only self-access, never content scopes. Content credentials cannot access learner data.
+- Current scopes: content:read, content:edit, content:publish, learner:read, learner:edit, learner:link. Telegram-linked learner credentials grant only self-access, never content scopes. Content credentials cannot access learner data.
 - No planned tool is exposed before its implementation, authorization and tests are ready.
 - All draft writes require expected_revision. Publish/rollback are explicitly approved and preserve historical task IDs, versions and answers.
 - Stage 3.3 supports draft_kind=new (TXT) and draft_kind=edit (JSON). Stage 1 is vocabulary; stages 2–8 are exercises. Task indices and insertion positions are zero-based, scoped to the specified stage and revision. Reorder accepts a full permutation. New tasks omit task_id; patch cannot change it. Draft deletion uses tombstones, hides drafts from list results and prevents UUID reuse; direct get returns deleted status. Published drafts cannot be deleted. Explicit confirmation is required for deletion and task removal.

@@ -13,6 +13,13 @@ EDIT = "content:edit"
 PUBLISH = "content:publish"
 LEARNER_READ = "learner:read"
 LEARNER_EDIT = "learner:edit"
+LEARNER_LINK = "learner:link"
+
+
+class OAuthLearnerToken(AccessToken):
+    oauth_issuer: str
+    oauth_subject: str
+    learner_id: int | None = None
 
 
 class StaticTokenVerifier:
@@ -52,14 +59,15 @@ def _identity(value):
 
 
 class IntrospectionTokenVerifier:
-    """Strict content-only RFC 7662 contract for an independently operated issuer."""
-    def __init__(self, url, client_id, secret, resource, issuer):
+    """Strict RFC 7662 contract for an independently operated issuer."""
+    def __init__(self, url, client_id, secret, resource, issuer, learner_enabled=False):
         self.url = _https_url(url, query_allowed=True)
         self.resource = _https_url(resource)
         self.issuer = _https_url(issuer)
         if not _identity(client_id) or not isinstance(secret, str) or not secret:
             raise ValueError("Introspection service credentials required")
         self.client_id, self.secret = client_id, secret
+        self.learner_enabled = learner_enabled
 
     async def verify_token(self, token: str):
         if not isinstance(token, str) or not 1 <= len(token) <= 8192 or not token.isascii() or any(not 33 <= ord(c) <= 126 for c in token) or token.startswith("tgtl_"):
@@ -92,8 +100,27 @@ class IntrospectionTokenVerifier:
             if not isinstance(raw_scope, str):
                 return None
             granted = set(raw_scope.split())
-            # Learner scopes and identity claims must never cross the content boundary.
-            if granted & {LEARNER_READ, LEARNER_EDIT} or READ not in granted or (PUBLISH in granted and EDIT not in granted):
+            learner_scopes = granted & {LEARNER_READ, LEARNER_EDIT, LEARNER_LINK}
+            if learner_scopes:
+                if not self.learner_enabled or granted & {READ, EDIT, PUBLISH} or LEARNER_READ not in granted:
+                    return None
+                from tgteacher_bot.db import learner_oauth as links
+                try:
+                    uid = await links.resolve(self.issuer, data["sub"])
+                except Exception:
+                    return None
+                if uid is None:
+                    if LEARNER_LINK not in granted:
+                        return None
+                    scopes = [LEARNER_LINK]
+                else:
+                    if type(uid) is not int or not 0 < uid <= 9223372036854775807:
+                        return None
+                    scopes = [scope for scope in (LEARNER_READ, LEARNER_EDIT) if scope in granted]
+                return OAuthLearnerToken(token=token, client_id="oauth:"+data["client_id"],
+                    scopes=scopes, expires_at=exp, resource=self.resource,
+                    oauth_issuer=self.issuer, oauth_subject=data["sub"], learner_id=uid)
+            if READ not in granted or (PUBLISH in granted and EDIT not in granted):
                 return None
             scopes = [s for s in (READ, EDIT, PUBLISH) if s in granted]
             return AccessToken(token=token, client_id="oauth:" + data["client_id"],
@@ -111,7 +138,8 @@ def verifier_from_env(resource):
         return IntrospectionTokenVerifier(os.environ["TGTEACHER_MCP_INTROSPECTION_URL"],
                                           os.environ["TGTEACHER_MCP_CLIENT_ID"],
                                           os.environ["TGTEACHER_MCP_CLIENT_SECRET"], resource,
-                                          os.environ["TGTEACHER_MCP_ISSUER_URL"])
+                                          os.environ["TGTEACHER_MCP_ISSUER_URL"],
+                                          learner_enabled=os.getenv("TGTEACHER_LEARNER_OAUTH_ENABLED", "0") == "1")
     raise ValueError("Unknown MCP authentication mode")
 
 
@@ -146,8 +174,20 @@ class LearnerTokenVerifier:
 def require_learner(write=False):
     require_scope(LEARNER_EDIT if write else LEARNER_READ)
     token = get_access_token()
+    if isinstance(token, OAuthLearnerToken):
+        if token.learner_id is None or not 0 < token.learner_id <= 9223372036854775807:
+            raise PermissionError("Learner identity unavailable")
+        return token.learner_id
     prefix, sep, uid = token.client_id.partition(":")
     if (not token.token.startswith("tgtl_") or prefix != "learner" or not sep or not uid.isascii()
             or not uid.isdecimal() or len(uid) > 19 or not 0 < int(uid) <= 9223372036854775807):
         raise PermissionError("Learner identity unavailable")
     return int(uid)
+
+
+def require_link_identity():
+    require_scope(LEARNER_LINK)
+    token = get_access_token()
+    if not isinstance(token, OAuthLearnerToken) or token.learner_id is not None:
+        raise PermissionError("OAuth linking identity unavailable")
+    return token.oauth_issuer, token.oauth_subject

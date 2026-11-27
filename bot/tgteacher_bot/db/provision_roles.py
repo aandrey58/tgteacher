@@ -14,21 +14,22 @@ from tgteacher_bot.web_admin import init_web
 # learner progress, and the bot retains legacy administration during cutover.
 CONTENT = set("families stage1_words stage2_tasks stage3_tasks stage4_tasks stage5_tasks stage6_tasks stage7_tasks stage8_tasks family_versions family_edit_drafts content_drafts family_audio_versions family_image_versions audio_assets image_assets tts_requests image_requests".split())
 PROGRESS = set("user_family_progress user_task_progress user_last_opened_family_place user_stage_state user_current_family family_version_learner_history legacy_unmapped_progress srs_cards srs_reviews learner_answer_events srs_review_tickets learner_preferences".split())
-LEARNERS = {"users", "deleted_learner_markers", "learner_tokens"}
+LEARNERS = {"users", "deleted_learner_markers", "learner_tokens", "learner_oauth_links"}
+LINK_CHALLENGES = {"learner_oauth_challenges"}
 OPERATIONS = set("web_support web_campaigns web_deliveries web_message_attachments web_admin_list_change web_system_control web_subscription_extensions payment_options stars_tariffs".split())
 FINANCE = {"payments", "payment_orders", "payment_refund_observations", "stars_orders"}
 AUTH = {"web_admin_accounts", "web_admin_sessions", "web_admin_audit"}
 VIEWS = {"active_task_positions", "active_user_task_progress"}
 COMMON_READ = VIEWS | {"runtime_schema_release", "content_schema_migrations"}
 WRITES = {
-    "bot": CONTENT | PROGRESS | LEARNERS | OPERATIONS | FINANCE | {"system_snapshots"},
+    "bot": CONTENT | PROGRESS | LEARNERS | LINK_CHALLENGES | OPERATIONS | FINANCE | {"system_snapshots"},
     "admin": CONTENT | PROGRESS | LEARNERS | OPERATIONS | AUTH | {"payments"},
-    "mcp": CONTENT | PROGRESS,
+    "mcp": CONTENT | PROGRESS | LINK_CHALLENGES,
 }
 READS = {
     "bot": COMMON_READ,
     "admin": COMMON_READ | (FINANCE - {"payments"}) | {"system_snapshots"},
-    "mcp": COMMON_READ | {"users", "learner_tokens"},
+    "mcp": COMMON_READ | {"users", "learner_tokens", "learner_oauth_links"},
 }
 
 

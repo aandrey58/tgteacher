@@ -14,7 +14,7 @@ from tgteacher_bot.db import drafts_repo as drafts, families_repo as families, c
 from tgteacher_bot.db.pool import get_pool
 from tgteacher_bot.db import tts_repo as tts
 from tgteacher_bot.db.user_repo import init_db_pg
-from tgteacher_bot.mcp_auth import READ, EDIT, PUBLISH, require_scope, verifier_from_env, LearnerTokenVerifier, require_learner
+from tgteacher_bot.mcp_auth import READ, EDIT, PUBLISH, require_scope, verifier_from_env, LearnerTokenVerifier, require_learner, require_link_identity
 
 
 def _page(limit, offset):
@@ -395,6 +395,17 @@ def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://
         if not confirm:
             raise ValueError("Preference changes require confirmation")
         return await update_preferences(uid,expected_revision,patch)
+
+    @server.tool(annotations=write)
+    async def begin_learner_link(confirm: bool) -> dict[str, Any]:
+        """Start linking your own OAuth account. Only enter the returned one-time command in your own private Telegram bot chat. Never request another person's confirmation."""
+        from tgteacher_bot.db import learner_oauth
+        issuer, subject = require_link_identity()
+        if not confirm:
+            raise ValueError("Account linking requires explicit confirmation")
+        code = await learner_oauth.begin(issuer, subject)
+        return {"command": "/review_link "+code, "expires_in_seconds": 600,
+                "instruction": "Confirm only a code from your own authenticated OAuth session in your private bot chat."}
 
     return server
 

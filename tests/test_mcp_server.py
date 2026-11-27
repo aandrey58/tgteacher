@@ -142,11 +142,11 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         result = self.rpc("tools/list").json()["result"]
         names = {tool["name"] for tool in result["tools"]}
-        self.assertEqual(len(names), 45)
+        self.assertEqual(len(names), 46)
         roadmap = (ROOT / "docs" / "MCP_V1_ROADMAP.md").read_text(encoding="utf-8")
         rows = re.findall(r"^\| \d+ \| `(\w+)` \| .*? \| (implemented|planned) \|", roadmap, re.M)
-        self.assertEqual(len(rows), 45)
-        self.assertEqual(len({name for name, _ in rows}), 45)
+        self.assertEqual(len(rows), 46)
+        self.assertEqual(len({name for name, _ in rows}), 46)
         self.assertEqual(names, {name for name, status in rows if status == "implemented"})
         self.assertIn("publish_draft", names)
         self.assertIn("archive_family", names)
@@ -181,7 +181,7 @@ class HTTPTests(unittest.TestCase):
                 args={key:sample(spec["properties"][key]) for key in spec.get("required",[])}
                 with self.subTest(tool=name):
                     self.assertEqual(self.rpc("tools/call",{"name":name,"arguments":args},token=None).status_code,401)
-                    denied = PUBLISHER if name in learner_tools else learner
+                    denied = PUBLISHER if name in learner_tools or name == "begin_learner_link" else learner
                     result=self.call(name,args,denied)
                     self.assertTrue(result.get("isError"),result)
                     self.assertIn("Insufficient permission",str(result))

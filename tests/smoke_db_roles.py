@@ -18,6 +18,10 @@ async def main():
         if service != "admin":
             forbidden.append("SELECT count(*) FROM web_admin_accounts")
         if service == "mcp":
+            await c.fetchval("SELECT count(*) FROM learner_oauth_links")
+            await c.execute("DELETE FROM learner_oauth_challenges WHERE false")
+            forbidden.append("DELETE FROM learner_oauth_links WHERE false")
+            forbidden.append("INSERT INTO learner_oauth_links(issuer,subject,user_id) VALUES(\'ci\',\'ci\',1)")
             forbidden.extend(["SELECT count(*) FROM payments","SELECT count(*) FROM stars_orders","SELECT count(*) FROM web_support","UPDATE users SET is_subscribed=true WHERE false"])
         if service == "admin":
             forbidden.append("UPDATE stars_orders SET state='paid' WHERE false")

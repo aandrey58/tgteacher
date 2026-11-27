@@ -39,6 +39,19 @@ async def init_srs(conn):
             expires_at TIMESTAMPTZ NOT NULL
         );
     """)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS learner_oauth_links (
+            issuer TEXT NOT NULL, subject TEXT NOT NULL,
+            user_id BIGINT NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE CASCADE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY(issuer,subject)
+        );
+        CREATE TABLE IF NOT EXISTS learner_oauth_challenges (
+            issuer TEXT NOT NULL, subject TEXT NOT NULL, code_hash TEXT NOT NULL UNIQUE,
+            expires_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(issuer,subject)
+        );
+        CREATE INDEX IF NOT EXISTS learner_oauth_challenges_expiry ON learner_oauth_challenges(expires_at);
+    """)
     from tgteacher_bot.db.learner_preferences import init_preferences
     await init_preferences(conn)
     if not await conn.fetchval("SELECT 1 FROM content_schema_migrations WHERE name='srs_v1'"):

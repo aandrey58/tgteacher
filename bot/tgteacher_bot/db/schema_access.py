@@ -2,7 +2,7 @@
 import os
 from tgteacher_bot.db.pool import get_pool
 
-VERSION = 1
+VERSION = 2
 ROLES = {
     "bot": "tgteacher_bot_runtime",
     "mcp": "tgteacher_mcp_runtime",
