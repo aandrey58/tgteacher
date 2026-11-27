@@ -13,269 +13,298 @@ MAX_USER_DATA_SIZE = 1000  # Максимальное количество по�
 
 @track_db_errors
 async def init_db_pg():
+    from tgteacher_bot.db.schema_access import verify_only, verify_schema
+    if verify_only():
+        await verify_schema()
+        return
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_family_progress (
-                user_id BIGINT NOT NULL,
-                family_idx INTEGER NOT NULL,
-                stage1_done INTEGER DEFAULT 0,
-                stage2_done INTEGER DEFAULT 0,
-                stage3_done INTEGER DEFAULT 0,
-                stage6_done INTEGER DEFAULT 0,
-                stage8_done INTEGER DEFAULT 0,
-                finished INTEGER DEFAULT 0,
-                completion_count INTEGER DEFAULT 0,
-                PRIMARY KEY (user_id, family_idx)
-            );
-        ''')
-        await conn.execute('''
-            ALTER TABLE user_family_progress
-            ADD COLUMN IF NOT EXISTS stage4_done INTEGER DEFAULT 0
-        ''')
-        # NEW: ensure stage5_done exists
-        await conn.execute('''
-            ALTER TABLE user_family_progress
-            ADD COLUMN IF NOT EXISTS stage5_done INTEGER DEFAULT 0
-        ''')
-        # NEW: ensure stage7_done exists
-        await conn.execute('''
-            ALTER TABLE user_family_progress
-            ADD COLUMN IF NOT EXISTS stage7_done INTEGER DEFAULT 0
-        ''')
-        # NEW: ensure completion_count exists
-        await conn.execute('''
-            ALTER TABLE user_family_progress
-            ADD COLUMN IF NOT EXISTS completion_count INTEGER DEFAULT 0
-        ''')
-        await conn.execute('''
-            ALTER TABLE user_family_progress
-            ADD COLUMN IF NOT EXISTS first_opened_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_task_progress (
-                user_id BIGINT NOT NULL,
-                family_idx INTEGER NOT NULL,
-                stage_num INTEGER NOT NULL,
-                task_idx INTEGER NOT NULL,
-                is_done INTEGER DEFAULT 0,
-                selected_choice_text TEXT,
-                is_correct INTEGER,
-                PRIMARY KEY (user_id, family_idx, stage_num, task_idx)
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_last_opened_family_place (
-                user_id BIGINT NOT NULL,
-                family_idx INTEGER NOT NULL,
-                stage_num INTEGER NOT NULL,
-                task_idx INTEGER NOT NULL,
-                PRIMARY KEY (user_id, family_idx)
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_stage_state (
-                user_id BIGINT NOT NULL,
-                family_idx INTEGER NOT NULL,
-                stage_num INTEGER NOT NULL,
-                state JSONB,
-                last_activity_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                PRIMARY KEY (user_id, family_idx, stage_num)
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_current_family (
-                user_id BIGINT NOT NULL,
-                family_idx INTEGER NOT NULL,
-                PRIMARY KEY (user_id)
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS families (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                folder_name TEXT,
-                target TEXT
-            );
-        ''')
-        # Удаляем ограничение UNIQUE с поля name, если оно существует
-        await conn.execute('''
-            ALTER TABLE families DROP CONSTRAINT IF EXISTS families_name_key
-        ''')
-        await conn.execute('''
-            ALTER TABLE families
-            ADD COLUMN IF NOT EXISTS target TEXT
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage1_words (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                word_order INTEGER NOT NULL,
-                word TEXT NOT NULL,
-                translation TEXT,
-                example TEXT,
-                example_translation TEXT,
-                hint TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage2_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                sentence TEXT NOT NULL,
-                answer TEXT NOT NULL,
-                choices JSONB,
-                explanation TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage3_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                word TEXT NOT NULL,
-                definition TEXT NOT NULL,
-                explanation TEXT,
-                choices JSONB,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage4_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                sentence TEXT NOT NULL,
-                answer TEXT NOT NULL,
-                choices JSONB,
-                explanation TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage5_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                image TEXT,
-                answer TEXT NOT NULL,
-                alternatives JSONB,
-                explanation TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage6_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                word TEXT NOT NULL,
-                synonyms JSONB,
-                wrong_synonyms JSONB,
-                explanation TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage7_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                task TEXT,
-                audio TEXT,
-                answer TEXT NOT NULL,
-                choices JSONB,
-                explanation TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS stage8_tasks (
-                id SERIAL PRIMARY KEY,
-                family_id INTEGER NOT NULL,
-                task_order INTEGER NOT NULL,
-                text TEXT NOT NULL,
-                answers JSONB,
-                explanations JSONB,
-                equal TEXT,
-                FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                registered_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                is_subscribed BOOLEAN DEFAULT FALSE,
-                subscription_count INTEGER DEFAULT 0,
-                last_active_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        ''')
-        # Добавляем столбец для даты окончания подписки, если его нет
-        await conn.execute('''
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS subscription_until TIMESTAMPTZ
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_user_task_progress_user_family_stage ON user_task_progress (user_id, family_idx, stage_num);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_user_last_opened_family_place_user_family ON user_last_opened_family_place (user_id, family_idx);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_user_stage_state_user_family_stage ON user_stage_state (user_id, family_idx, stage_num);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage1_words_family_id ON stage1_words (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage2_tasks_family_id ON stage2_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage3_tasks_family_id ON stage3_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage4_tasks_family_id ON stage4_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage5_tasks_family_id ON stage5_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage6_tasks_family_id ON stage6_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage7_tasks_family_id ON stage7_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_stage8_tasks_family_id ON stage8_tasks (family_id);
-        ''')
-        await conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_user_current_family_user_id ON user_current_family (user_id);
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS payment_options (
-                id SERIAL PRIMARY KEY,
-                months INTEGER NOT NULL UNIQUE,
-                amount INTEGER NOT NULL,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        ''')
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_family_progress (
+                    user_id BIGINT NOT NULL,
+                    family_idx INTEGER NOT NULL,
+                    stage1_done INTEGER DEFAULT 0,
+                    stage2_done INTEGER DEFAULT 0,
+                    stage3_done INTEGER DEFAULT 0,
+                    stage6_done INTEGER DEFAULT 0,
+                    stage8_done INTEGER DEFAULT 0,
+                    finished INTEGER DEFAULT 0,
+                    completion_count INTEGER DEFAULT 0,
+                    PRIMARY KEY (user_id, family_idx)
+                );
+            ''')
+            await conn.execute('''
+                ALTER TABLE user_family_progress
+                ADD COLUMN IF NOT EXISTS stage4_done INTEGER DEFAULT 0
+            ''')
+            # NEW: ensure stage5_done exists
+            await conn.execute('''
+                ALTER TABLE user_family_progress
+                ADD COLUMN IF NOT EXISTS stage5_done INTEGER DEFAULT 0
+            ''')
+            # NEW: ensure stage7_done exists
+            await conn.execute('''
+                ALTER TABLE user_family_progress
+                ADD COLUMN IF NOT EXISTS stage7_done INTEGER DEFAULT 0
+            ''')
+            # NEW: ensure completion_count exists
+            await conn.execute('''
+                ALTER TABLE user_family_progress
+                ADD COLUMN IF NOT EXISTS completion_count INTEGER DEFAULT 0
+            ''')
+            await conn.execute('''
+                ALTER TABLE user_family_progress
+                ADD COLUMN IF NOT EXISTS first_opened_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_task_progress (
+                    user_id BIGINT NOT NULL,
+                    family_idx INTEGER NOT NULL,
+                    stage_num INTEGER NOT NULL,
+                    task_idx INTEGER NOT NULL,
+                    is_done INTEGER DEFAULT 0,
+                    selected_choice_text TEXT,
+                    is_correct INTEGER,
+                    PRIMARY KEY (user_id, family_idx, stage_num, task_idx)
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_last_opened_family_place (
+                    user_id BIGINT NOT NULL,
+                    family_idx INTEGER NOT NULL,
+                    stage_num INTEGER NOT NULL,
+                    task_idx INTEGER NOT NULL,
+                    PRIMARY KEY (user_id, family_idx)
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_stage_state (
+                    user_id BIGINT NOT NULL,
+                    family_idx INTEGER NOT NULL,
+                    stage_num INTEGER NOT NULL,
+                    state JSONB,
+                    last_activity_timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    PRIMARY KEY (user_id, family_idx, stage_num)
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_current_family (
+                    user_id BIGINT NOT NULL,
+                    family_idx INTEGER NOT NULL,
+                    PRIMARY KEY (user_id)
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS families (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    folder_name TEXT,
+                    target TEXT
+                );
+            ''')
+            await conn.execute("ALTER TABLE families ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ")
+            # Удаляем ограничение UNIQUE с поля name, если оно существует
+            await conn.execute('''
+                ALTER TABLE families DROP CONSTRAINT IF EXISTS families_name_key
+            ''')
+            await conn.execute('''
+                ALTER TABLE families
+                ADD COLUMN IF NOT EXISTS target TEXT
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage1_words (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    word_order INTEGER NOT NULL,
+                    word TEXT NOT NULL,
+                    translation TEXT,
+                    example TEXT,
+                    example_translation TEXT,
+                    hint TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage2_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    sentence TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    choices JSONB,
+                    explanation TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage3_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    word TEXT NOT NULL,
+                    definition TEXT NOT NULL,
+                    explanation TEXT,
+                    choices JSONB,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage4_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    sentence TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    choices JSONB,
+                    explanation TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage5_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    image TEXT,
+                    answer TEXT NOT NULL,
+                    alternatives JSONB,
+                    explanation TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage6_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    word TEXT NOT NULL,
+                    synonyms JSONB,
+                    wrong_synonyms JSONB,
+                    explanation TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage7_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    task TEXT,
+                    audio TEXT,
+                    answer TEXT NOT NULL,
+                    choices JSONB,
+                    explanation TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS stage8_tasks (
+                    id SERIAL PRIMARY KEY,
+                    family_id INTEGER NOT NULL,
+                    task_order INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    answers JSONB,
+                    explanations JSONB,
+                    equal TEXT,
+                    FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE
+                );
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    registered_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    is_subscribed BOOLEAN DEFAULT FALSE,
+                    subscription_count INTEGER DEFAULT 0,
+                    last_active_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+            ''')
+            # Keep a minimal durable deletion marker to reject replayed legacy imports.
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS deleted_learner_markers (
+                    user_id BIGINT PRIMARY KEY,
+                    deleted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            # Добавляем столбец для даты окончания подписки, если его нет
+            await conn.execute('''
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS subscription_until TIMESTAMPTZ
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_task_progress_user_family_stage ON user_task_progress (user_id, family_idx, stage_num);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_last_opened_family_place_user_family ON user_last_opened_family_place (user_id, family_idx);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_stage_state_user_family_stage ON user_stage_state (user_id, family_idx, stage_num);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage1_words_family_id ON stage1_words (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage2_tasks_family_id ON stage2_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage3_tasks_family_id ON stage3_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage4_tasks_family_id ON stage4_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage5_tasks_family_id ON stage5_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage6_tasks_family_id ON stage6_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage7_tasks_family_id ON stage7_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_stage8_tasks_family_id ON stage8_tasks (family_id);
+            ''')
+            await conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_current_family_user_id ON user_current_family (user_id);
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS payment_options (
+                    id SERIAL PRIMARY KEY,
+                    months INTEGER NOT NULL UNIQUE,
+                    amount INTEGER NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+            ''')
+
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS users_admin_activity_idx ON users(last_active_at DESC NULLS LAST,user_id);
+                CREATE INDEX IF NOT EXISTS user_family_progress_family_idx ON user_family_progress(family_idx);
+                CREATE INDEX IF NOT EXISTS users_admin_registered_idx ON users(registered_at);
+            """)
+            from tgteacher_bot.db.drafts_repo import init_drafts
+            await init_drafts(conn)
+            from tgteacher_bot.db.content_schema import migrate_content
+            await migrate_content(conn)
+            from tgteacher_bot.db.web_operations import init_operations
+            await init_operations(conn)
 
 @track_db_errors
 async def set_task_done_pg(user_id: int, family_idx: int, stage_num: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done)
-            VALUES ($1, $2, $3, $4, 1)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET is_done = 1
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done)
+            SELECT $1, $2, $3, $4, task_id, 1 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=$3 AND task_idx=$4
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET is_done = 1
         ''', user_id, family_idx, stage_num, task_idx)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def start_family_progress_pg(user_id: int, family_idx: int):
@@ -328,41 +357,50 @@ async def get_completed_families_info_pg(user_id: int):
 async def set_stage2_answer_pg(user_id: int, family_idx: int, task_idx: int, selected_choice_text: str, is_correct: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 2, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 2, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=2 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_choice_text, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def set_stage4_answer_pg(user_id: int, family_idx: int, task_idx: int, selected_choice_text: str, is_correct: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 4, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 4, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=4 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_choice_text, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def set_stage5_answer_pg(user_id: int, family_idx: int, task_idx: int, user_answer: str, is_correct: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 5, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET 
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 5, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=5 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET 
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, user_answer, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def get_stage5_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 5 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -378,7 +416,7 @@ async def get_completed_tasks_pg(user_ids: List[int], family_idx: int, stage_num
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
-            SELECT user_id, task_idx FROM user_task_progress
+            SELECT user_id, task_idx FROM active_user_task_progress
             WHERE user_id = ANY($1::bigint[]) AND family_idx = $2 AND stage_num = $3 AND is_done = 1
         ''', user_ids, family_idx, stage_num)
         
@@ -392,11 +430,16 @@ async def get_started_families_ids_pg(user_id: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
-            SELECT DISTINCT uss.family_idx, MAX(uss.last_activity_timestamp) as last_activity
-            FROM user_stage_state uss
-            WHERE uss.user_id = $1 
-            GROUP BY uss.family_idx
-            ORDER BY last_activity DESC
+            SELECT history.family_idx, MAX(history.activity) AS last_activity
+            FROM (
+                SELECT family_idx, last_activity_timestamp AS activity FROM user_stage_state WHERE user_id=$1
+                UNION ALL
+                SELECT family_idx, first_opened_timestamp AS activity FROM user_family_progress WHERE user_id=$1
+                UNION ALL
+                SELECT family_idx, NULL::timestamptz AS activity FROM user_task_progress WHERE user_id=$1
+            ) history JOIN families f ON f.id=history.family_idx
+            GROUP BY history.family_idx
+            ORDER BY last_activity DESC NULLS LAST, history.family_idx DESC
         ''', user_id)
         return [row['family_idx'] for row in rows]
 
@@ -433,7 +476,8 @@ async def reset_family_progress_pg(user_id: int, family_idx: int):
         
         # Удаляем прогресс, но сохраняем запись с completion_count
         await conn.execute('''
-            DELETE FROM user_task_progress WHERE user_id = $1 AND family_idx = $2
+            DELETE FROM user_task_progress p WHERE user_id = $1 AND family_idx = $2
+            AND EXISTS (SELECT 1 FROM active_task_positions t WHERE t.family_idx=p.family_idx AND t.stage_num=p.stage_num AND t.task_id=p.task_id)
         ''', user_id, family_idx)
         await conn.execute('''
             DELETE FROM user_last_opened_family_place WHERE user_id = $1 AND family_idx = $2
@@ -457,7 +501,7 @@ async def get_stage2_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 2 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -469,7 +513,7 @@ async def get_stage4_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 4 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -480,19 +524,22 @@ async def get_stage4_answer_pg(user_id: int, family_idx: int, task_idx: int):
 async def set_stage3_answer_pg(user_id: int, family_idx: int, task_idx: int, selected_choice_text: str, is_correct: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 3, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET 
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 3, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=3 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET 
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_choice_text, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def get_stage3_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 3 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -504,19 +551,22 @@ async def set_stage6_answer_pg(user_id: int, family_idx: int, task_idx: int, sel
     selected_choices_str = ';'.join(selected_choices)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 6, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET 
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 6, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=6 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET 
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_choices_str, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def get_stage6_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 6 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -529,19 +579,22 @@ async def set_stage8_answer_pg(user_id: int, family_idx: int, task_idx: int, sel
     selected_words_str = ';'.join(selected_words)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 8, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET 
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 8, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=8 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET 
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_words_str, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def get_stage8_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 8 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:
@@ -559,7 +612,7 @@ async def get_all_stage_answers_for_family_pg(user_ids: List[int], family_idx: i
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
             SELECT user_id, stage_num, task_idx, selected_choice_text, is_correct 
-            FROM user_task_progress
+            FROM active_user_task_progress
             WHERE user_id = ANY($1::bigint[]) AND family_idx = $2 AND is_done = 1 AND is_correct IS NOT NULL
         ''', user_ids, family_idx)
         
@@ -634,6 +687,7 @@ async def clean_inactive_user_states_pg(inactivity_threshold_minutes: int):
         await conn.execute(f'''
             DELETE FROM user_stage_state
             WHERE last_activity_timestamp < NOW() - INTERVAL '{interval_str}'
+              AND NOT EXISTS (SELECT 1 FROM families f WHERE f.id=user_stage_state.family_idx AND f.archived_at IS NOT NULL)
         ''') 
 
 @track_db_errors
@@ -658,7 +712,7 @@ async def get_all_user_completed_tasks_counts(user_id: int, family_ids: List[int
 
         rows = await conn.fetch('''
             SELECT family_idx, stage_num, COUNT(task_idx) as count
-            FROM user_task_progress
+            FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = ANY($2::int[]) AND is_done = 1
             GROUP BY family_idx, stage_num
         ''', user_id, family_ids)
@@ -675,59 +729,43 @@ async def get_all_user_completed_tasks_counts(user_id: int, family_ids: List[int
         return results 
 
 @track_db_errors
-async def add_or_update_user_pg(user_id: int, username: str, first_name: str, last_name: str):
+async def add_or_update_user_pg(user_id: int, username: str, first_name: str, last_name: str, *, allow_rejoin=False):
+    """Serialize registration with deletion; only an explicit private /start may rejoin."""
+    from tgteacher_bot.db.srs_repo import lock_user
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Сначала проверяем существующего пользователя
-        existing_user = await conn.fetchrow('''
-            SELECT username, first_name, last_name
-            FROM users
-            WHERE user_id = $1
-        ''', user_id)
-        
-        if existing_user:
-            # Пользователь существует - обновляем только измененные поля
-            update_fields = []
-            update_values = []
-            param_count = 1
-            
-            if existing_user['username'] != username:
-                update_fields.append(f"username = ${param_count}")
-                update_values.append(username)
-                param_count += 1
-                
-            if existing_user['first_name'] != first_name:
-                update_fields.append(f"first_name = ${param_count}")
-                update_values.append(first_name)
-                param_count += 1
-                
-            if existing_user['last_name'] != last_name:
-                update_fields.append(f"last_name = ${param_count}")
-                update_values.append(last_name)
-                param_count += 1
-            
-            # Обновляем только если есть изменения
-            if update_fields:
-                query = f'''
-                    UPDATE users 
-                    SET {', '.join(update_fields)}
-                    WHERE user_id = ${param_count}
-                '''
-                update_values.append(user_id)
-                await conn.execute(query, *update_values)
-        else:
-            # Пользователя нет - вставляем нового
-            await conn.execute('''
-                INSERT INTO users (user_id, username, first_name, last_name)
-                VALUES ($1, $2, $3, $4)
-            ''', user_id, username, first_name, last_name)
+        async with conn.transaction():
+            await lock_user(conn,user_id)
+            deleted = await conn.fetchval("SELECT 1 FROM deleted_learner_markers WHERE user_id=$1",user_id)
+            if deleted and not allow_rejoin:
+                return "blocked"
+            exists = await conn.fetchval("SELECT 1 FROM users WHERE user_id=$1",user_id)
+            if deleted and not exists:
+                # Remove any orphan progress left by old callbacks before a fresh registration.
+                await _delete_learner_data(conn,user_id)
+            await conn.execute("""
+                INSERT INTO users(user_id,username,first_name,last_name)
+                VALUES($1,$2,$3,$4)
+                ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,
+                    first_name=excluded.first_name,last_name=excluded.last_name
+                WHERE (users.username,users.first_name,users.last_name)
+                    IS DISTINCT FROM (excluded.username,excluded.first_name,excluded.last_name)
+            """,user_id,username,first_name,last_name)
+            return "rejoined" if deleted and not exists else "registered"
+
+
+async def has_deletion_marker(user_id: int):
+    pool=await get_pool()
+    async with pool.acquire() as conn:
+        return bool(await conn.fetchval("SELECT 1 FROM deleted_learner_markers WHERE user_id=$1",user_id))
 
 @track_db_errors
 async def get_user_subscription_info_pg(user_id: int) -> Dict[str, Any]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT is_subscribed, subscription_count, subscription_until
+            SELECT (is_subscribed IS TRUE AND (subscription_until IS NULL OR subscription_until>now())) AS is_subscribed,
+                   subscription_count, subscription_until
             FROM users
             WHERE user_id = $1
         ''', user_id)
@@ -745,53 +783,24 @@ async def get_user_subscription_info_pg(user_id: int) -> Dict[str, Any]:
 
 @track_db_errors
 async def extend_user_subscription_pg(user_id: int, months: int):
-    """
-    Продлевает подписку пользователя на указанное количество месяцев
-    
-    Args:
-        user_id: ID пользователя в Telegram
-        months: Количество месяцев для продления
-    """
-    import datetime
-    
+    """Legacy helper: atomic update, same 30-day month rule as payment settlement."""
+    if type(months) is not int or not 1<=months<=60:
+        raise ValueError("Invalid subscription duration")
     pool = await get_pool()
+    from tgteacher_bot.db.srs_repo import lock_user
     async with pool.acquire() as conn:
-        # Получаем текущую информацию о подписке
-        row = await conn.fetchrow('''
-            SELECT subscription_until, subscription_count
-            FROM users
-            WHERE user_id = $1
-        ''', user_id)
-        
-        if not row:
-            # Пользователь не существует, создаем запись
-            await conn.execute('''
-                INSERT INTO users (user_id, subscription_until, subscription_count, is_subscribed)
-                VALUES ($1, NOW() + INTERVAL '$2 months', $2, true)
-            ''', user_id, months)
-        else:
-            # Пользователь существует, продлеваем подписку
-            current_until = row['subscription_until']
-            current_count = row['subscription_count'] or 0
-            
-            # Если подписка истекла, начинаем с текущего момента
-            if not current_until or current_until < datetime.datetime.now(datetime.timezone.utc):
-                new_until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30 * months)
-            else:
-                # Если подписка активна, добавляем к текущей дате окончания
-                new_until = current_until + datetime.timedelta(days=30 * months)
-            
-            new_count = current_count + months
-            
-            await conn.execute('''
-                UPDATE users 
-                SET subscription_until = $2, 
-                    subscription_count = $3, 
-                    is_subscribed = true
-                WHERE user_id = $1
-            ''', user_id, new_until, new_count)
-        
-        logger.info(f"Подписка пользователя {user_id} продлена на {months} месяцев")
+        async with conn.transaction():
+            await lock_user(conn,user_id)
+            if await conn.fetchval("""SELECT 1 FROM deleted_learner_markers d
+                WHERE d.user_id=$1 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.user_id=d.user_id)""",user_id):
+                raise ValueError("Deleted learner must register again")
+            await conn.execute("""INSERT INTO users(user_id,subscription_until,subscription_count,is_subscribed)
+            VALUES($1,now()+make_interval(days=>$2::int),$3,true)
+            ON CONFLICT(user_id) DO UPDATE SET
+                subscription_until=CASE WHEN users.is_subscribed IS TRUE AND users.subscription_until IS NULL THEN NULL
+                    WHEN users.is_subscribed IS TRUE THEN greatest(now(),users.subscription_until)+make_interval(days=>$2::int)
+                    ELSE now()+make_interval(days=>$2::int) END,
+                subscription_count=coalesce(users.subscription_count,0)+$3,is_subscribed=true""",user_id,months*30,months)
 
 @track_db_errors
 async def get_all_users_progress_for_family_pg(family_id: int) -> List[Dict[str, Any]]:
@@ -803,7 +812,7 @@ async def get_all_users_progress_for_family_pg(family_id: int) -> List[Dict[str,
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
             SELECT user_id, stage_num, COUNT(task_idx) as completed_tasks
-            FROM user_task_progress
+            FROM active_user_task_progress
             WHERE family_idx = $1 AND is_done = 1
             GROUP BY user_id, stage_num
             ORDER BY user_id, stage_num
@@ -820,24 +829,36 @@ async def get_family_stage_answers_stats_pg(family_id: int) -> List[Dict[str, An
     async with pool.acquire() as conn:
         rows = await conn.fetch('''
             SELECT stage_num, is_correct, COUNT(*) as count
-            FROM user_task_progress
+            FROM active_user_task_progress
             WHERE family_idx = $1 AND stage_num IN (2, 3, 4, 5, 6, 8) AND is_correct IS NOT NULL
             GROUP BY stage_num, is_correct
         ''', family_id)
         return [dict(row) for row in rows] 
 
+async def _delete_learner_data(conn,user_id):
+    await conn.execute('DELETE FROM learner_tokens WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM srs_cards WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM learner_answer_events WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM user_family_progress WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM user_task_progress WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM user_last_opened_family_place WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM user_stage_state WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM user_current_family WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM family_version_learner_history WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM legacy_unmapped_progress WHERE user_id = $1', user_id)
+    await conn.execute('DELETE FROM users WHERE user_id = $1', user_id)
+
+
 @track_db_errors
 async def delete_user_and_progress_pg(user_id: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Удаляем прогресс по всем группам слов
-        await conn.execute('DELETE FROM user_family_progress WHERE user_id = $1', user_id)
-        await conn.execute('DELETE FROM user_task_progress WHERE user_id = $1', user_id)
-        await conn.execute('DELETE FROM user_last_opened_family_place WHERE user_id = $1', user_id)
-        await conn.execute('DELETE FROM user_stage_state WHERE user_id = $1', user_id)
-        await conn.execute('DELETE FROM user_current_family WHERE user_id = $1', user_id)
-        # Удаляем самого пользователя
-        await conn.execute('DELETE FROM users WHERE user_id = $1', user_id) 
+        async with conn.transaction():
+            from tgteacher_bot.db.srs_repo import lock_user
+            await lock_user(conn, user_id)
+            await conn.execute("""INSERT INTO deleted_learner_markers(user_id) VALUES($1)
+                ON CONFLICT(user_id) DO UPDATE SET deleted_at=now()""",user_id)
+            await _delete_learner_data(conn,user_id)
 
 @track_db_errors
 async def set_family_finished_pg(user_id: int, family_idx: int):
@@ -1011,19 +1032,22 @@ async def delete_all_user_progress_for_family(family_idx: int):
 async def set_stage7_answer_pg(user_id: int, family_idx: int, task_idx: int, selected_choice_text: str, is_correct: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, is_done, selected_choice_text, is_correct)
-            VALUES ($1, $2, 7, $3, 1, $4, $5)
-            ON CONFLICT (user_id, family_idx, stage_num, task_idx) DO UPDATE SET
+        result = await conn.execute('''
+            INSERT INTO user_task_progress (user_id, family_idx, stage_num, task_idx, task_id, is_done, selected_choice_text, is_correct)
+            SELECT $1, $2, 7, $3, task_id, 1, $4, $5 FROM active_task_positions
+            WHERE family_idx=$2 AND stage_num=7 AND task_idx=$3
+            ON CONFLICT (user_id, family_idx, stage_num, task_id) DO UPDATE SET
                 is_done = 1, selected_choice_text = $4, is_correct = $5
         ''', user_id, family_idx, task_idx, selected_choice_text, 1 if is_correct else 0)
+        if result == "INSERT 0 0":
+            raise ValueError("Exercise position is no longer available")
 
 @track_db_errors
 async def get_stage7_answer_pg(user_id: int, family_idx: int, task_idx: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow('''
-            SELECT selected_choice_text, is_correct FROM user_task_progress
+            SELECT selected_choice_text, is_correct FROM active_user_task_progress
             WHERE user_id = $1 AND family_idx = $2 AND stage_num = 7 AND task_idx = $3 AND is_done = 1
         ''', user_id, family_idx, task_idx)
         if row and row['selected_choice_text'] is not None:

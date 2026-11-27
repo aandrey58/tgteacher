@@ -1,4 +1,5 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, Update
+from tgteacher_bot.core.learning_session import versioned_markup as InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from tgteacher_bot.db.families_repo import get_family_data_pg, delete_family_from_pg, get_stage1_words_pg, get_stage2_tasks_pg, get_stage3_tasks_pg, get_stage6_tasks_pg, get_stage8_tasks_pg, get_all_stage_tasks_counts_for_families # <-- Добавлено
 from tgteacher_bot.db.user_repo import set_family_stage_done_pg, start_family_progress_pg, set_task_done_pg, set_last_opened_family_place_pg, get_last_opened_family_place_pg, reset_family_progress_pg, set_stage2_answer_pg, get_stage2_answer_pg, get_completed_tasks_pg, set_stage3_answer_pg, get_stage3_answer_pg, get_stage6_answer_pg, set_stage6_answer_pg, get_stage8_answer_pg, get_user_stage_state_pg, set_user_stage_state_pg, set_current_family_idx_pg, get_current_family_idx_pg, get_all_user_completed_tasks_counts # <-- Добавлено

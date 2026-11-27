@@ -65,184 +65,184 @@
 
 #STAGE2
 #TASK
-#SENTENCE We need fresh ___ for dinner.
+#SENTENCE For a classic Italian caprese salad, we need ___, mozzarella and basil.
 #ANSWER tomatoes
-#CHOICES tomatoes; shoes; buses; grapes
-#EXPLANATION Only tomatoes are food.
+#CHOICES tomatoes; bananas; potatoes; grapes
+#EXPLANATION Caprese is traditionally made with tomatoes, mozzarella and basil.
 
 #TASK
-#SENTENCE She always eats a ___ before training.
+#SENTENCE The yellow fruit with a curved shape is a ___.
 #ANSWER banana
-#CHOICES banana; taxi; carrot; metro
-#EXPLANATION Best snack is banana.
+#CHOICES banana; lemon; cucumber; carrot
+#EXPLANATION A banana is curved and usually yellow when ripe.
 
 #TASK
-#SENTENCE Please peel the ___ for the soup.
-#ANSWER potato
-#CHOICES potato; train; sweater; lemon
-#EXPLANATION Only potato needs peeling.
+#SENTENCE For mashed ___, boil them until soft and mash them with milk.
+#ANSWER potatoes
+#CHOICES potatoes; onions; cucumbers; lemons
+#EXPLANATION Mashed potatoes are a common side dish.
 
 #TASK
-#SENTENCE He cried while cutting the ___.
+#SENTENCE My eyes watered when I chopped the ___.
 #ANSWER onion
-#CHOICES onion; bus; grape; dress
-#EXPLANATION Onion makes you cry.
+#CHOICES onion; apple; potato; cucumber
+#EXPLANATION Cutting an onion can make your eyes water.
 
 #TASK
-#SENTENCE Add some ___ to make the tea sour.
+#SENTENCE To make lemonade, squeeze a fresh ___.
 #ANSWER lemon
-#CHOICES lemon; jacket; metro; carrot
-#EXPLANATION Lemon is sour.
+#CHOICES lemon; apple; banana; cucumber
+#EXPLANATION Lemonade is made with lemons.
 
 #TASK
-#SENTENCE Rabbits like to eat ___.
+#SENTENCE The soup contains an orange root vegetable called a ___.
 #ANSWER carrot
-#CHOICES carrot; tomato; bus; shoes
-#EXPLANATION Only carrot matches.
+#CHOICES carrot; pepper; tomato; cucumber
+#EXPLANATION A carrot is a root vegetable.
 
 #TASK
-#SENTENCE My favourite fruit is ___.
+#SENTENCE The fruit in this traditional pie is an ___: it has a core with seeds.
 #ANSWER apple
-#CHOICES apple; pepper; taxi; trousers
-#EXPLANATION Apple is a fruit.
+#CHOICES apple; onion; cucumber; potato
+#EXPLANATION An apple has a core with seeds and is commonly used in pies.
 
 #TASK
-#SENTENCE This ___ is very spicy.
+#SENTENCE A chilli is a type of ___.
 #ANSWER pepper
-#CHOICES pepper; cucumber; tram; banana
-#EXPLANATION Pepper can be spicy.
+#CHOICES pepper; tomato; onion; grape
+#EXPLANATION A chilli is a type of pepper.
 
 #TASK
-#SENTENCE Slice the ___ for the sandwich.
+#SENTENCE A pickle is often made by preserving a ___ in vinegar.
 #ANSWER cucumber
-#CHOICES cucumber; metro; carrot; train
-#EXPLANATION Only cucumber fits.
+#CHOICES cucumber; banana; apple; lemon
+#EXPLANATION Pickled cucumbers are a common type of pickle.
 
 #TASK
-#SENTENCE I bought a bunch of ___ today.
+#SENTENCE Raisins are dried ___.
 #ANSWER grapes
-#CHOICES grapes; potatoes; jackets; bus
-#EXPLANATION Grapes come in bunches.
+#CHOICES grapes; apples; lemons; onions
+#EXPLANATION Raisins are dried grapes.
 
 #STAGE3
 #WORD apple
-#DEFINITION A round fruit, often red or green.
-#EXPLANATION Correct description.
-#CHOICES apple; taxi; onion; train
+#DEFINITION A round fruit with a core and seeds, often red or green.
+#EXPLANATION An apple has a core.
+#CHOICES apple; lemon; onion; grape
 
 #WORD carrot
-#DEFINITION A long orange vegetable.
-#EXPLANATION Rabbits like it.
-#CHOICES carrot; tram; pepper; jacket
+#DEFINITION A long, usually orange root vegetable.
+#EXPLANATION Carrots are usually orange root vegetables.
+#CHOICES carrot; pepper; cucumber; potato
 
 #WORD onion
-#DEFINITION Vegetable that makes you cry when cut.
-#EXPLANATION Only onion does this.
-#CHOICES onion; grape; bus; trousers
+#DEFINITION A vegetable with layers that often makes your eyes water when cut.
+#EXPLANATION An onion has layers.
+#CHOICES onion; apple; potato; cucumber
 
 #WORD lemon
-#DEFINITION A sour fruit used in tea.
-#EXPLANATION Lemon fits this.
-#CHOICES lemon; carrot; metro; sweater
+#DEFINITION A yellow citrus fruit with sour juice.
+#EXPLANATION A lemon is a sour citrus fruit.
+#CHOICES lemon; banana; apple; grape
 
 #WORD pepper
-#DEFINITION Can be sweet or spicy and has many colors.
-#EXPLANATION Only pepper matches.
-#CHOICES pepper; apple; train; dress
+#DEFINITION A vegetable that can be bell-shaped, or a small hot chilli.
+#EXPLANATION Bell peppers and chilli peppers belong to this group.
+#CHOICES pepper; carrot; cucumber; potato
 
 #WORD tomato
-#DEFINITION Red fruit often used in salads.
-#EXPLANATION Tomato is the answer.
-#CHOICES tomato; carrot; taxi; onion
+#DEFINITION A juicy, usually red fruit used in sauces such as ketchup.
+#EXPLANATION Ketchup is typically made from tomatoes.
+#CHOICES tomato; apple; pepper; grape
 
 #WORD potato
-#DEFINITION A vegetable you can boil, fry or bake.
-#EXPLANATION Potato matches.
-#CHOICES potato; tram; apple; lemon
+#DEFINITION A starchy tuber commonly used to make chips or fries.
+#EXPLANATION Potatoes are starchy tubers.
+#CHOICES potato; carrot; cucumber; onion
 
 #WORD cucumber
-#DEFINITION Green, long and refreshing.
-#EXPLANATION Cucumber fits.
-#CHOICES cucumber; jacket; pepper; metro
+#DEFINITION A long green vegetable with watery flesh, often used in salads.
+#EXPLANATION Cucumbers contain a lot of water.
+#CHOICES cucumber; pepper; carrot; potato
 
 #WORD banana
-#DEFINITION Yellow fruit often eaten as a snack.
-#EXPLANATION Banana matches.
-#CHOICES banana; bus; onion; potato
+#DEFINITION A long curved fruit with a thick skin that you peel before eating.
+#EXPLANATION Bananas are curved fruits.
+#CHOICES banana; lemon; carrot; cucumber
 
 #WORD grape
-#DEFINITION Small and round, eaten in bunches.
-#EXPLANATION Grapes grow in bunches.
-#CHOICES grape; bus; lemon; taxi
+#DEFINITION A small fruit that grows in bunches and is used to make wine.
+#EXPLANATION Grapes are used to make wine.
+#CHOICES grape; apple; tomato; lemon
 
-#STAGE4  (10 заданий — новые)
+#STAGE4
 #TASK
-#SENTENCE I like hot and spicy ___.
-#ANSWER peppers
-#CHOICES peppers; apples; shoes; train
-#EXPLANATION Only peppers are spicy.
+#SENTENCE The recipe calls for a red bell ___.
+#ANSWER pepper
+#CHOICES pepper; onion; tomato; apple
+#EXPLANATION A bell pepper is a sweet variety of pepper.
 
 #TASK
-#SENTENCE Please wash the ___ before eating.
+#SENTENCE Wine is usually made from ___.
 #ANSWER grapes
-#CHOICES grapes; taxi; sweater; onion
-#EXPLANATION Only grapes are eaten raw.
+#CHOICES grapes; cucumbers; potatoes; carrots
+#EXPLANATION Grapes are the usual fruit for wine.
 
 #TASK
-#SENTENCE I squeeze ___ juice on the fish.
+#SENTENCE She added a slice of ___ to her tea to give it a citrus flavour.
 #ANSWER lemon
-#CHOICES lemon; train; carrot; metro
-#EXPLANATION Lemon fits.
+#CHOICES lemon; banana; potato; onion
+#EXPLANATION Lemon gives tea a citrus flavour.
 
 #TASK
-#SENTENCE He added chopped ___ to the dish.
+#SENTENCE He fried the chopped ___ until its layers became golden.
 #ANSWER onion
-#CHOICES onion; jacket; metro; dress
-#EXPLANATION Onion is food.
+#CHOICES onion; cucumber; lemon; grape
+#EXPLANATION Onion layers soften and turn golden when fried.
 
 #TASK
-#SENTENCE My mother grows ___ in the garden.
+#SENTENCE Passata is a smooth sauce made from ___.
 #ANSWER tomatoes
-#CHOICES tomatoes; trousers; bus; apple
-#EXPLANATION Tomatoes grow in gardens.
+#CHOICES tomatoes; grapes; potatoes; bananas
+#EXPLANATION Passata is made from strained tomatoes.
 
 #TASK
-#SENTENCE Let’s make mashed ___ tonight.
+#SENTENCE French fries are usually made from ___.
 #ANSWER potatoes
-#CHOICES potatoes; metro; shirt; cucumber
-#EXPLANATION Potatoes are used for mash.
+#CHOICES potatoes; apples; onions; grapes
+#EXPLANATION French fries are made from potatoes.
 
 #TASK
-#SENTENCE Put some ___ in the salad to make it fresh.
+#SENTENCE Tzatziki is a yoghurt sauce traditionally made with grated ___.
 #ANSWER cucumber
-#CHOICES cucumber; tram; onion; lemon
-#EXPLANATION Cucumber gives freshness.
+#CHOICES cucumber; banana; apple; lemon
+#EXPLANATION Grated cucumber is a traditional ingredient.
 
 #TASK
-#SENTENCE She bought organic ___ today.
+#SENTENCE Cider is typically an alcoholic drink made from ___.
 #ANSWER apples
-#CHOICES apples; jackets; buses; train
-#EXPLANATION Only apples are food.
+#CHOICES apples; bananas; carrots; potatoes
+#EXPLANATION Traditional cider is made from apples.
 
 #TASK
-#SENTENCE We must fry some ___ for dinner.
+#SENTENCE The cake contains grated ___, which give it its orange colour.
 #ANSWER carrots
-#CHOICES carrots; lemon; taxi; tram
-#EXPLANATION Carrots can be fried.
+#CHOICES carrots; cucumbers; onions; potatoes
+#EXPLANATION Carrot cake uses grated carrots.
 
 #TASK
-#SENTENCE A ___ is perfect before a workout.
+#SENTENCE She peeled a ___ and put its curved yellow skin in the bin.
 #ANSWER banana
-#CHOICES banana; jacket; pepper; metro
-#EXPLANATION Banana is a snack.
+#CHOICES banana; apple; grape; tomato
+#EXPLANATION A banana has a curved yellow peel.
 
 #STAGE8
 #TEXT
-This morning I went to the market.  
-First, I bought fresh (___) and (___) for the salad.  
-Then I found sweet (___) and a yellow (___) for tea.  
-I also bought (___), (___) and a few (___) for soup.  
-Finally, I took a (___) as a snack and a bunch of (___) for dessert.
+This morning I went to the market.
+For ketchup, I bought some red (___). For pickles, I chose (___).
+I bought (___) for cider and a yellow (___) for lemonade.
+For a cake, I picked some orange (___). Then I chose some (___), which made my eyes water as I cut them, and (___) to make French fries.
+I also bought a curved yellow (___), a bunch of (___) to make raisins, and a red bell (___).
 
 #ANSWER1 tomatoes
 #ANSWER2 cucumbers
@@ -255,13 +255,13 @@ Finally, I took a (___) as a snack and a bunch of (___) for dessert.
 #ANSWER9 grapes
 #ANSWER10 pepper
 
-#EXPLANATION1 Salad ingredient.
-#EXPLANATION2 Salad ingredient.
-#EXPLANATION3 Fruit.
-#EXPLANATION4 For tea.
-#EXPLANATION5 Soup ingredient.
-#EXPLANATION6 Soup ingredient.
-#EXPLANATION7 Soup ingredient.
-#EXPLANATION8 Snack.
-#EXPLANATION9 Dessert fruit.
-#EXPLANATION10 Can be sweet/spicy in dishes.
+#EXPLANATION1 Ketchup is made from tomatoes.
+#EXPLANATION2 Cucumbers are commonly pickled.
+#EXPLANATION3 Cider is typically made from apples.
+#EXPLANATION4 Lemonade is made from lemons.
+#EXPLANATION5 Carrots are orange root vegetables used in cakes.
+#EXPLANATION6 Cutting onions can make your eyes water.
+#EXPLANATION7 French fries are made from potatoes.
+#EXPLANATION8 A banana is a curved yellow fruit.
+#EXPLANATION9 Raisins are dried grapes.
+#EXPLANATION10 A bell pepper is a type of pepper.

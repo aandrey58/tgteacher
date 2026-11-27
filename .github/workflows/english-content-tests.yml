@@ -1,0 +1,235 @@
+name: English content tests
+
+on:
+  push:
+    branches: [english-adaptation]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16@sha256:07abc3f43c9395b0bdbbab36bc25ddb0e8d83cd4fcafb5fb7d6abe14ff156dd8
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: tgteacher_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tgteacher_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TGTEACHER_TEST_DSN: postgresql://postgres:testpassword@localhost:5432/tgteacher_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install --require-hashes -r requirements.lock && python -m pip check
+      - name: Verify FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version
+      - name: Compile Python
+        run: python -m compileall -q bot tests
+      - name: Run regression and PostgreSQL integration tests
+        run: python -m unittest discover -s tests -v
+
+  release-smoke:
+    runs-on: ubuntu-24.04
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.isolated.yml
+      COMPOSE_PROJECT_NAME: tgteacher
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare isolated smoke credentials
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=ci-only-password/' .env
+          echo 'TGTEACHER_BOT_DB_PASSWORD=ci-only-bot-runtime-aaaaaaaaaaaa' >> .env
+          echo 'TGTEACHER_MCP_DB_PASSWORD=ci-only-mcp-runtime-bbbbbbbbbbbb' >> .env
+          echo 'TGTEACHER_ADMIN_DB_PASSWORD=ci-only-admin-runtime-cccccccc' >> .env
+          cp bot.env.example bot.env
+          echo 'BOT_TOKEN=123456:ci-only-test-token' >> bot.env
+          cp mcp.env.example mcp.env
+          echo 'TGTEACHER_MCP_READ_TOKEN=rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr' >> mcp.env
+          echo 'TGTEACHER_MCP_EDIT_TOKEN=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' >> mcp.env
+          echo 'TGTEACHER_MCP_PUBLISH_TOKEN=pppppppppppppppppppppppppppppppp' >> mcp.env
+          cp admin.env.example admin.env
+          echo 'WEB_ADMIN_SECRET=ci-only-web-admin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' >> admin.env
+          mkdir -p runtime_cache bot/exports
+          sudo chown -R 10001:10001 runtime_cache bot/exports families
+          sudo chmod -R u+rwX runtime_cache bot/exports families
+          docker compose config --quiet
+      - name: Build release containers
+        run: docker compose build db bot mcp
+      - name: Start isolated DB and MCP
+        run: |
+          docker compose up -d --wait --wait-timeout 120 db
+          docker compose --profile migration run --rm --build db-migrate
+          docker compose up -d --wait --wait-timeout 120 mcp || { docker compose ps; docker compose logs --no-color --tail=80 mcp; exit 1; }
+      - name: Verify readiness, protected discovery and runtime bot registration
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8000/healthz || { docker compose ps; docker compose logs --no-color --tail=80 mcp; exit 1; }
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' http://127.0.0.1:8000/mcp)" = 401
+          curl --fail --silent -H 'Authorization: Bearer rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' http://127.0.0.1:8000/mcp | python -c 'import sys,json; assert len(json.load(sys.stdin)["result"]["tools"])==46'
+          docker compose run --rm --no-deps bot python -c 'from tgteacher_bot.core.app import build_application; a=build_application(); assert a.job_queue is not None; assert a.handlers'
+          docker compose run --rm --no-deps -e TGTEACHER_LEGACY_ADMIN=0 -e TGTEACHER_WEB_SUPPORT=1 bot python -c 'from tgteacher_bot.core.app import build_application; a=build_application(); names={h.callback.__name__ for hs in a.handlers.values() for h in hs}; assert {"_legacy_admin_retired","help_user_text_handler","confirm_payment_callback","start"} <= names; assert "help_group_reply_handler" not in names; assert not any(n.startswith("admin_") for n in names)'
+          docker compose run --rm --no-deps -e TGTEACHER_LEGACY_ADMIN=1 -e TGTEACHER_WEB_SUPPORT=0 bot python -c 'from tgteacher_bot.core.app import build_application; a=build_application(); names={h.callback.__name__ for hs in a.handlers.values() for h in hs}; assert {"admin_panel_callback","help_group_reply_handler","confirm_payment_callback","start"} <= names; assert "_legacy_admin_retired" not in names'
+      - name: Build and start React admin
+        run: |
+          docker compose --profile web build admin
+          docker compose --profile web up -d admin
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8080/ >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8080/ | grep 'TGTeacher Admin'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/groups)" = 401
+      - name: Verify container privilege and secret isolation
+        run: |
+          for service in bot mcp admin; do
+            docker compose --profile web run --rm --no-deps "$service" python -c 'import os; assert os.getuid()==10001 and os.getgid()==10001; fields=dict(line.split(":",1) for line in open("/proc/self/status") if ":" in line); assert int(fields["CapEff"].strip(),16)==0; assert fields["NoNewPrivs"].strip()=="1"; assert not os.access("/app/bot/tgteacher_bot",os.W_OK)'
+          done
+          docker compose run --rm --no-deps bot python -c 'import os,tempfile; assert os.environ.get("BOT_TOKEN"); assert not os.environ.get("TGTEACHER_MCP_READ_TOKEN"); assert not os.environ.get("WEB_ADMIN_SECRET"); [tempfile.TemporaryFile(dir=p).close() for p in ("/app/runtime_cache","/app/bot/exports","/app/families")]'
+          docker compose exec -T mcp python -c 'import os; assert os.environ.get("TGTEACHER_MCP_READ_TOKEN"); assert not os.environ.get("BOT_TOKEN"); assert not os.environ.get("WEB_ADMIN_SECRET"); assert not os.access("/app/families",os.W_OK)'
+          docker compose --profile web exec -T admin python -c 'import os; assert os.environ.get("WEB_ADMIN_SECRET"); assert not any(k.startswith("TGTEACHER_MCP_") for k in os.environ); assert not os.environ.get("BOT_TOKEN"); assert not os.access("/app/runtime_cache",os.W_OK); assert not os.access("/app/families",os.W_OK)'
+      - name: Verify PostgreSQL role separation with real connections
+        run: |
+          docker compose run --rm --no-deps -T bot python - < tests/smoke_db_roles.py
+          docker compose exec -T mcp python - < tests/smoke_db_roles.py
+          docker compose --profile web exec -T admin python - < tests/smoke_db_roles.py
+      - name: Verify patched OS packages and minimal migration image
+        run: |
+          for service in mcp admin; do
+            docker compose --profile web run --rm --no-deps "$service" sh -ec 'dpkg --compare-versions "$(dpkg-query -W libzstd1 | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"; ffmpeg -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=0.1 -c:a libopus -f ogg -y /tmp/smoke.ogg; ffprobe -v error /tmp/smoke.ogg; rm /tmp/smoke.ogg'
+          done
+          for service in bot db-migrate; do
+            docker compose --profile migration run --rm --no-deps "$service" sh -ec 'if command -v ffmpeg || command -v ffprobe; then exit 1; fi; test "$(id -u)" = 10001; dpkg --compare-versions "$(dpkg-query -W libzstd1 | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"'
+          done
+          docker compose exec -T db sh -ec 'dpkg --compare-versions "$(dpkg-query -W libzstd1 | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"; dpkg --compare-versions "$(dpkg-query -W zstd | cut -f2)" ge "1.5.7+dfsg-1+deb13u1"'
+      - name: Verify media authoring and bot audio reading in their actual containers
+        run: |
+          for service in mcp admin; do
+            docker compose --profile web run --rm --no-deps -T "$service" python - <<'PY'
+          import asyncio
+          from tgteacher_bot.services.tts_providers import convert_mp3, check_mp3
+          data = asyncio.run(convert_mp3(bytes(24000 * 2), "pcm", 24000, 1))
+          assert check_mp3(data) == data
+          PY
+          done
+          docker compose run --rm --no-deps -T bot python - <<'PY'
+          import asyncio
+          import shutil
+          from unittest.mock import AsyncMock, MagicMock, patch
+          from tgteacher_bot.db import tts_repo
+          from tgteacher_bot.handlers.user import stage_7
+          assert shutil.which("ffmpeg") is None
+          assert shutil.which("ffprobe") is None
+          assert stage_7.get_audio_bytes is tts_repo.get_audio_bytes
+          conn = MagicMock()
+          conn.fetchval = AsyncMock(return_value=b"synthetic-stored-audio")
+          pool = MagicMock()
+          pool.acquire.return_value.__aenter__.return_value = conn
+          with patch.object(tts_repo, "get_pool", new=AsyncMock(return_value=pool)):
+              result = asyncio.run(tts_repo.get_audio_bytes("tts-" + "a"*64 + ".mp3"))
+          assert result == b"synthetic-stored-audio"
+          conn.fetchval.assert_awaited_once()
+          PY
+      - name: Verify PostgreSQL privilege drop and rebuilt gosu
+        run: |
+          docker compose exec -T db gosu --version | grep -F 'go1.27.4'
+          docker compose exec -T db sh -ec 'test "$(gosu postgres id -u)" = "$(id -u postgres)"; test "$(gosu postgres id -g)" = "$(id -g postgres)"; test "$(grep "^Uid:" /proc/1/status | cut -f2)" = "$(id -u postgres)"'
+          docker compose exec -T db pg_isready
+      - name: Seed synthetic screenshot data
+        run: docker compose --profile web exec -T admin python - < tests/seed_web_demo.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify responsive React flows in Chromium and WebKit
+        working-directory: admin-web
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium webkit
+          npx playwright test
+      - name: Scan actual release images for OS and application CVEs
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tgt-image-scan" "$RUNNER_TEMP/tgt-trivy-cache"
+          scanner=aquasec/trivy:0.76.2
+          docker pull "$scanner"
+          docker image inspect "$scanner" --format '{{json .RepoDigests}}'
+          status=0
+          for service in bot mcp admin db-migrate db; do
+            image="tgteacher-$service"
+            if [ "$service" = db ]; then
+              image=tgteacher-postgres:16-patched
+            fi
+            docker image inspect "$image" --format '{{.Id}}' > "$RUNNER_TEMP/tgt-image-scan/$service.image-id.txt"
+            docker save "$image" -o "$RUNNER_TEMP/tgt-image-scan/input.tar"
+            rc=0
+            docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+              -v "$RUNNER_TEMP/tgt-image-scan:/scan" \
+              -v "$RUNNER_TEMP/tgt-trivy-cache:/cache" \
+              "$scanner" image --cache-dir /cache --input /scan/input.tar \
+              --scanners vuln --format json --list-all-pkgs --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+              --exit-code 0 --timeout 8m --output "/scan/$service.json" || rc=$?
+            rm -f "$RUNNER_TEMP/tgt-image-scan/input.tar"
+            if [ "$rc" -ne 0 ]; then
+              echo "Scanner execution failed for $service (exit $rc)"
+              status=1
+              continue
+            fi
+            python - "$RUNNER_TEMP/tgt-image-scan/$service.json" <<'PY' || status=1
+          import collections, json, sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          report = json.loads(path.read_text())
+          if not report.get("Results"):
+              raise RuntimeError("No scan targets reported: " + path.name)
+          counts = collections.Counter()
+          for result in report["Results"]:
+              for vuln in result.get("Vulnerabilities") or []:
+                  severity = vuln.get("Severity", "UNKNOWN")
+                  counts[severity] += 1
+                  if severity in {"HIGH", "CRITICAL"}:
+                      print(path.stem, result.get("Type"), vuln.get("VulnerabilityID"),
+                            vuln.get("PkgName"), vuln.get("InstalledVersion"),
+                            "fixed:", vuln.get("FixedVersion") or "none listed", severity)
+          print(path.stem, "severity totals:", dict(counts))
+          sys.exit(int(bool(counts["HIGH"] or counts["CRITICAL"])))
+          PY
+          done
+          exit "$status"
+      - name: Upload container vulnerability reports and package inventories
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-image-vulnerability-audit
+          path: |
+            ${{ runner.temp }}/tgt-image-scan/*.json
+            ${{ runner.temp }}/tgt-image-scan/*.image-id.txt
+          if-no-files-found: ignore
+      - name: Upload admin browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-browser-evidence
+          path: admin-web/test-results/
+          if-no-files-found: ignore
+      - name: Cleanup
+        if: always()
+        run: docker compose --profile web down -v

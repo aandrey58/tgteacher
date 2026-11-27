@@ -1,4 +1,4 @@
-python-telegram-bot>=21.0
+python-telegram-bot[job-queue]>=21.0,<23
 python-dotenv
 asyncpg
 httpx>=0.27
@@ -9,4 +9,11 @@ psutil
 yookassa>=3.0.0
 
 # Если используешь psutil для мониторинга (admin_status.py), раскомментируй:
-# psutil 
+# psutil
+
+# MCP server (v1 API)
+mcp>=1.26,<2
+uvicorn>=0.34
+mutagen>=1.47,<2
+Pillow==13.0.0
+fsrs==6.3.1

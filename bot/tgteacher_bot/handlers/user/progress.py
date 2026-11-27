@@ -31,7 +31,7 @@ async def get_stage_details_view(update: Update, context: ContextTypes.DEFAULT_T
 
     user_id = update.effective_user.id
     await mark_user_active_if_needed(user_id, context)
-    family_meta = await get_family_data_pg(family_idx)
+    family_meta = await get_family_data_pg(family_idx, include_archived=True)
     if not family_meta:
         await query.edit_message_text("Ошибка: группа слов не найдена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🏠 В меню', callback_data='main_menu')]]))
         return
@@ -183,7 +183,7 @@ async def get_family_progress_submenu(update: Update, context: ContextTypes.DEFA
 
     user_id = update.effective_user.id
     await mark_user_active_if_needed(user_id, context)
-    family_meta = await get_family_data_pg(family_idx)
+    family_meta = await get_family_data_pg(family_idx, include_archived=True)
     if not family_meta:
         await query.edit_message_text("Ошибка: группа слов не найдена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🏠 В меню', callback_data='main_menu')]]))
         return
@@ -274,15 +274,14 @@ async def get_family_progress_submenu(update: Update, context: ContextTypes.DEFA
     # MCP: Добавляем информацию о количестве завершений
     completion_text = f"\nГруппа слов пройдена раз: {completion_count}" if completion_count > 0 else ""
     text = f"📈 Прогресс по группе слов: <b>{family_meta['name']}</b>{completion_text}"
+    if family_meta.get('archived_at'):
+        text += '\n📦 Группа в архиве. Результаты сохранены.'
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard_rows), parse_mode='HTML')
 
 
 async def get_main_progress_keyboard(user_id: int, page: int = 0):
     """Генерирует главный экран прогресса с пагинацией."""
     started_families_ids = await get_started_families_ids_pg(user_id)
-    # MCP: Оставляем только реально существующие группы слов
-    existing_family_ids = set(f['id'] for f in families_data.ALL_FAMILIES_META)
-    started_families_ids = [fid for fid in started_families_ids if fid in existing_family_ids]
     
     if not started_families_ids:
         return InlineKeyboardMarkup([
@@ -313,10 +312,10 @@ async def get_main_progress_keyboard(user_id: int, page: int = 0):
 
     keyboard_rows = []
     for family_id in page_ids:
-        family_meta = await get_family_data_pg(family_id)
+        family_meta = await get_family_data_pg(family_id, include_archived=True)
         if not family_meta:
             continue
-        family_name = family_meta['name']
+        family_name = family_meta['name'] + (' [архив]' if family_meta.get('archived_at') else '')
         
         # Считаем общий прогресс по всем этапам, используя предзагруженные данные
         s1_tasks_total = all_tasks_counts.get(family_id, {}).get(1, 0)

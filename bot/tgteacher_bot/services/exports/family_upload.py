@@ -9,6 +9,9 @@ import pyzipper
 from tgteacher_bot.utils.family_parser import parse_family_txt # Импортируем парсер
 from tgteacher_bot.core import paths
 import struct
+import tempfile
+import uuid
+from tgteacher_bot.utils.content_validation import validate_family, ContentValidationError
 
 ALLOWED_EXTENSIONS = {'.txt', '.png', '.jpg', '.jpeg', '.webp', '.mp3'}
 
@@ -318,6 +321,11 @@ def _get_unique_folder_name(base_name: str) -> str:
     return folder_name
 
 def validate_and_extract_family_zip(zip_path):
+    with tempfile.TemporaryDirectory(prefix='.import-', dir=FAMILIES_DIR) as staging:
+        return _extract_family_zip(zip_path, staging)
+
+
+def _extract_family_zip(zip_path, staging):
     with pyzipper.AESZipFile(zip_path, 'r') as archive:
         # Собираем список файлов/папок, аккуратно декодируя имена
         top_dirs = set()
@@ -348,30 +356,34 @@ def validate_and_extract_family_zip(zip_path):
             if name:
                 name = name.replace('\\', '/')
                 name = _fix_common_mojibake(name)
-            if name and '/' in name:
-                top_dirs.add(name.split('/')[0])
+            if not name:
+                raise FamilyArchiveError('Пустое имя файла в архиве')
+            parts = name.rstrip('/').split('/')
+            if any(p in ('', '.', '..') or ':' in p or '\x00' in p for p in parts):
+                raise FamilyArchiveError('Небезопасный путь в архиве')
+            if len(parts) < 2 and not name.endswith('/'):
+                raise FamilyArchiveError('Файлы должны находиться в папке группы')
+            if not name.endswith('/') and not is_allowed_file(name):
+                raise FamilyArchiveError('Неподдерживаемый формат файла в архиве')
+            if any(previous.casefold() == name.casefold() for _, previous in decoded_files):
+                raise FamilyArchiveError('Повторяющееся имя файла в архиве')
+            top_dirs.add(parts[0])
             decoded_files.append((zi, name))
         if len(top_dirs) != 1:
             raise FamilyArchiveError('В архиве должна быть одна папка на верхнем уровне!')
-        folder_name = list(top_dirs)[0]
-        
-        # Распаковываем во временную папку сначала
-        temp_target_dir = os.path.join(FAMILIES_DIR, folder_name)
-        if os.path.exists(temp_target_dir):
-            raise FamilyArchiveError(f'Временная папка "{folder_name}" уже существует! Очистите папку families.')
-        
-        # Распаковываем вручную с сохранением структуры
+        if len(decoded_files) > 1000 or sum(z.file_size for z, _ in decoded_files) > 100 * 1024 * 1024:
+            raise FamilyArchiveError('Архив превышает лимит распаковки')
+        folder_name = next(iter(top_dirs))
+        temp_target_dir = os.path.join(staging, folder_name)
         for zi, name in decoded_files:
-            if not name or name.endswith('/'):
-                # Папка
-                out_dir = os.path.join(FAMILIES_DIR, name)
-                os.makedirs(out_dir, exist_ok=True)
-                continue
-            out_path = os.path.join(FAMILIES_DIR, name)
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
-            with archive.open(zi) as src, open(out_path, 'wb') as dst:
-                shutil.copyfileobj(src, dst)
-        
+            out_path = os.path.join(staging, name)
+            if name.endswith('/'):
+                os.makedirs(out_path, exist_ok=True)
+            else:
+                os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                with archive.open(zi) as src, open(out_path, 'wb') as dst:
+                    shutil.copyfileobj(src, dst)
+
         # Теперь ищем .txt внутри temp_target_dir
         txt_files = [f for f in os.listdir(temp_target_dir) if f.endswith('.txt')]
         if len(txt_files) != 1:
@@ -379,19 +391,10 @@ def validate_and_extract_family_zip(zip_path):
         txt_filepath = os.path.join(temp_target_dir, txt_files[0])
         parsed_family_data = parse_family_txt(txt_filepath)
         
-        # Истина имени — из TXT (#FAMILY). Генерируем уникальное имя папки
-        desired_name = parsed_family_data.get('name') or folder_name
-        unique_folder_name = _get_unique_folder_name(desired_name)
-        
-        # Переименовываем папку в уникальное имя
-        if unique_folder_name != folder_name:
-            logging.info(f"Группа слов '{desired_name}' будет сохранена в папку '{unique_folder_name}' (автоматически добавлена приставка для уникальности)")
-            new_target_dir = os.path.join(FAMILIES_DIR, unique_folder_name)
-            os.rename(temp_target_dir, new_target_dir)
-            target_dir = new_target_dir
-        else:
-            target_dir = temp_target_dir
-        
+        desired_name = parsed_family_data['name']
+        validate_family(parsed_family_data)
+        target_dir = temp_target_dir
+
         # Переименовываем TXT-файл под имя семьи: <FAMILY>.txt
         final_txt_basename = desired_name + '.txt'
         current_txt_basename = os.path.basename(txt_filepath)
@@ -407,6 +410,25 @@ def validate_and_extract_family_zip(zip_path):
                 logging.error(f"Не удалось переименовать TXT-файл '{current_txt_basename}' -> '{final_txt_basename}': {e}")
                 raise FamilyArchiveError('Не удалось привести имя TXT к имени семьи.')
         
+        # Imported generated assets are portable legacy files in this installation.
+        # Never leave a reserved content-addressed filename pointing to mutable disk bytes.
+        from tgteacher_bot.db.image_repo import managed_id as image_id
+        from tgteacher_bot.db.tts_repo import managed_id as audio_id
+        for stage, field, identify in (("stage5_tasks","image",image_id),("stage7_tasks","audio",audio_id)):
+            renamed = {}
+            for task in parsed_family_data.get(stage, []):
+                name = task[field]
+                if not identify(name):
+                    continue
+                if name not in renamed:
+                    matches = [f for f in os.listdir(target_dir) if f.casefold() == name.casefold()]
+                    if len(matches) != 1:
+                        raise FamilyArchiveError("Managed media missing or ambiguous")
+                    destination = "imported-" + uuid.uuid4().hex + os.path.splitext(name)[1]
+                    os.rename(os.path.join(target_dir,matches[0]), os.path.join(target_dir,destination))
+                    renamed[name] = destination
+                task[field] = renamed[name]
+
         # MCP: Автонормализация изображений + обновление ссылок
         try:
             parsed_family_data = _normalize_family_images(target_dir, parsed_family_data)
@@ -417,9 +439,19 @@ def validate_and_extract_family_zip(zip_path):
             parsed_family_data = _normalize_family_audios(target_dir, parsed_family_data)
         except Exception as e:
             logging.warning(f"[FAMILY NORMALIZE] Ошибка нормализации аудио: {type(e).__name__}: {e}")
-        return parsed_family_data, target_dir
+        validate_family(parsed_family_data, media_dir=target_dir)
+        # Keep the portable TXT consistent with rewritten media references.
+        from tgteacher_bot.utils.family_renderer import render_family_txt
+        with open(txt_filepath,"w",encoding="utf-8") as target:
+            target.write(render_family_txt(parsed_family_data))
+        final_dir = os.path.join(FAMILIES_DIR, f'{desired_name} ({uuid.uuid4().hex[:12]})')
+        os.rename(target_dir, final_dir)
+        return parsed_family_data, final_dir
 
 async def validate_and_extract_family_zip_with_ux(update, context: ContextTypes.DEFAULT_TYPE):
+    from tgteacher_bot.handlers.admin.admin_list import get_admin_ids
+    if not update.effective_user or str(update.effective_user.id) not in get_admin_ids():
+        return
     if not context.user_data.get('waiting_for_family_zip'):
         return
 
@@ -439,14 +471,7 @@ async def validate_and_extract_family_zip_with_ux(update, context: ContextTypes.
         )
         return
 
-    family_name_from_zip = os.path.splitext(doc.file_name)[0]
-    # Убираем проверку на существование папки - теперь разрешаем дублирование названий
-    # target_dir = os.path.join(FAMILIES_DIR, family_name_from_zip)
-    # if os.path.exists(target_dir):
-    #     # ❌ Группа слов с таким именем уже существует. Переименуй архив.
-    #     return
-
-    zip_path = os.path.join(FAMILIES_DIR, doc.file_name)
+    zip_path = os.path.join(FAMILIES_DIR, f'.upload-{uuid.uuid4().hex}.zip')
     file = await doc.get_file()
     await file.download_to_drive(zip_path)
     try:
@@ -462,28 +487,14 @@ async def validate_and_extract_family_zip_with_ux(update, context: ContextTypes.
             logging.error(f'[TGTeacher] Не удалось удалить сообщение с инструкцией: {e}', exc_info=True)
         context.user_data['add_family_msg_id'] = None
         context.user_data['add_family_chat_id'] = None
+    committed = False
     try:
         parsed_family_data, extracted_folder_path = validate_and_extract_family_zip(zip_path)
         # Сохраняем спарсенные данные в БД; folder_name = имя извлечённой папки (после возможного переименования под имя из TXT)
-        try:
-            folder_name_for_db = os.path.basename(extracted_folder_path)
-            await save_family_to_pg(parsed_family_data, folder_name=folder_name_for_db)
-        except Exception as e:
-            logging.error(f"Ошибка при сохранении группы слов в БД: {e}", exc_info=True)
-            # Убираем проверку на уникальность - теперь разрешаем дублирование названий
-            # if 'unique' in str(e).lower():
-            #     await update.message.reply_text(
-            #         '❌ Группа слов с таким именем уже существует! Переименуй архив или удалите старую группу слов.',
-            #         reply_markup=InlineKeyboardMarkup([
-            #             [InlineKeyboardButton('✅ Ок', callback_data='admin_file_exists_ok')]
-            #         ])
-            #     )
-            #     os.remove(zip_path)
-            #     if os.path.exists(extracted_folder_path):
-            #         shutil.rmtree(extracted_folder_path)
-            #     return
-            # else:
-            raise
+        folder_name_for_db = os.path.basename(extracted_folder_path)
+        await save_family_to_pg(parsed_family_data, folder_name=folder_name_for_db)
+        committed = True
+        context.user_data['waiting_for_family_zip'] = False
         # И обновляем кэш метаданных в памяти
         await families_data._load_initial_families_meta()
         await update.message.reply_text(
@@ -493,28 +504,25 @@ async def validate_and_extract_family_zip_with_ux(update, context: ContextTypes.
             ])
         )
         context.user_data['waiting_for_family_zip'] = False
-        os.remove(zip_path) # Удаляем временный ZIP-файл
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
         # shutil.rmtree(extracted_folder_path) # Удаляем извлеченную папку после сохранения в DB
-    except FamilyArchiveError as e:
-        logging.error(f"Ошибка при разархивировании: {e}", exc_info=True)
+    except (FamilyArchiveError, ValueError) as e:
+        logging.warning("Invalid family import: %s", e)
         await update.message.reply_text(
-            f'❌ Ошибка при разархивировании: {e}',
+            f'❌ Группа не добавлена: {e}',
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton('⬅️ В меню', callback_data='admin_panel')]
             ])
         )
-        os.remove(zip_path) # Удаляем временный ZIP-файл
-        try:
-            if 'extracted_folder_path' in locals() and extracted_folder_path and os.path.exists(extracted_folder_path):
-                shutil.rmtree(extracted_folder_path)
-        except Exception:
-            pass
-    except Exception as e:
-        logging.error(f"Неизвестная ошибка при обработке архива группы слов: {e}", exc_info=True)
-        await update.message.reply_text(f'❌ Неизвестная ошибка: {e}')
-        os.remove(zip_path) # Удаляем временный ZIP-файл
-        try:
-            if 'extracted_folder_path' in locals() and extracted_folder_path and os.path.exists(extracted_folder_path):
-                shutil.rmtree(extracted_folder_path)
-        except Exception:
-            pass 
+    except Exception:
+        logging.exception("Family import failed")
+        message = ('Группа сохранена, но не удалось обновить меню. '
+                   'Не загружайте её повторно.' if committed else
+                   '❌ Не удалось добавить группу слов.')
+        await update.message.reply_text(message)
+    finally:
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        if not committed and 'extracted_folder_path' in locals():
+            shutil.rmtree(extracted_folder_path, ignore_errors=True)

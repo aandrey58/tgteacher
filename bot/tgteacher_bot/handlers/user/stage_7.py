@@ -1,5 +1,7 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, InputFile
+from telegram import InlineKeyboardButton, Update, InputFile
+from tgteacher_bot.core.learning_session import versioned_markup as InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from tgteacher_bot.db.tts_repo import get_audio_bytes, managed_id
 from tgteacher_bot.db.families_repo import get_family_data_pg, get_stage7_tasks_pg, get_stage8_tasks_pg
 from tgteacher_bot.db.user_repo import (
     set_task_done_pg,
@@ -136,54 +138,32 @@ async def _send_audio_and_text(update: Update, context: ContextTypes.DEFAULT_TYP
     if audio_name:
         cache_key = f"{family_meta.get('folder_name') or ''}/{audio_name}"
         cached_id = global_file_id_cache.get(cache_key)
-        
-        # Поиск файла без учёта регистра
-        family_dir = os.path.join(_families_root_dir(), family_meta['folder_name'] or '')
-        audio_path = find_file_case_insensitive(family_dir, audio_name)
-        
-        if not audio_path:
-            logger.warning(f"[stage7] Файл аудио '{audio_name}' не найден в папке '{family_dir}'")
-        else:
+        if cached_id:
             try:
-                if cached_id:
-                    # Пробуем отправить по cached file_id
-                    tmp_msg = await bot.send_audio(chat_id=chat_id, audio=cached_id)
-                    # Валидируем, что файл не "битый" (например, 64 байта)
-                    if tmp_msg and getattr(tmp_msg, 'audio', None):
-                        file_size = getattr(tmp_msg.audio, 'file_size', None)
-                        if file_size is not None and file_size < 1024:
-                            logger.warning(f"[stage7] cached file_id для '{audio_name}' выглядит битым (size={file_size}). Пере-заливаю файл и обновляю cache.")
-                            global_file_id_cache.pop(cache_key, None)
-                            # Удаляем битое сообщение, чтобы у пользователя не оставалось мусора
-                            try:
-                                await bot.delete_message(chat_id=chat_id, message_id=tmp_msg.message_id)
-                            except Exception:
-                                pass
-                        else:
-                            audio_message = tmp_msg
-                if audio_message is None:
-                    # Заливаем файл с явным именем
-                    try:
-                        with open(audio_path, 'rb') as f:
-                            audio_message = await bot.send_audio(chat_id=chat_id, audio=InputFile(f, filename=os.path.basename(audio_path)))
-                        if audio_message and getattr(audio_message, 'audio', None):
-                            global_file_id_cache[cache_key] = audio_message.audio.file_id
-                    except Exception as e_up:
-                        logger.warning(f"[stage7] Ошибка отправки аудио файлом '{audio_name}': {type(e_up).__name__}: {e_up}")
-                        # Фоллбек на документ с явным именем
-                        try:
-                            with open(audio_path, 'rb') as f:
-                                audio_message = await bot.send_document(chat_id=chat_id, document=InputFile(f, filename=os.path.basename(audio_path)))
-                        except Exception as e2:
-                            logger.warning(f"[stage7] Ошибка отправки документа '{audio_name}': {type(e2).__name__}: {e2}")
-            except Exception as e:
-                logger.warning(f"[stage7] Ошибка отправки аудио '{audio_name}' (cached or upload): {type(e).__name__}: {e}")
-                # Фоллбек на документ с явным именем
-                try:
+                audio_message = await bot.send_audio(chat_id=chat_id, audio=cached_id)
+            except Exception:
+                global_file_id_cache.pop(cache_key, None)
+        if audio_message is None:
+            data = await get_audio_bytes(audio_name)
+            if data is None and not managed_id(audio_name):
+                family_dir = os.path.join(_families_root_dir(), family_meta['folder_name'] or '')
+                audio_path = find_file_case_insensitive(family_dir, audio_name)
+                if audio_path:
                     with open(audio_path, 'rb') as f:
-                        audio_message = await bot.send_document(chat_id=chat_id, document=InputFile(f, filename=os.path.basename(audio_path)))
-                except Exception as e2:
-                    logger.warning(f"[stage7] Ошибка отправки документа '{audio_name}': {type(e2).__name__}: {e2}")
+                        data = f.read()
+            if data:
+                try:
+                    audio_message = await bot.send_audio(chat_id=chat_id, audio=InputFile(data, filename=audio_name))
+                    if getattr(audio_message, 'audio', None):
+                        global_file_id_cache[cache_key] = audio_message.audio.file_id
+                except Exception:
+                    try:
+                        audio_message = await bot.send_document(chat_id=chat_id, document=InputFile(data, filename=audio_name))
+                    except Exception:
+                        logger.warning("[stage7] Audio delivery failed")
+    if not audio_message:
+        await bot.send_message(chat_id=chat_id, text="Аудио недоступно. Откройте группу повторно позже.")
+        return
     # Обновлять st7['file_id_cache'] больше не нужно; используется глобальный кэш
 
     if audio_message:

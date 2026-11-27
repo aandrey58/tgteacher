@@ -28,6 +28,10 @@ AUTO_SNAPSHOT_INTERVAL_SECONDS = 5 * 60  # каждые 5 минут
 
 
 async def init_system_snapshots_pg() -> None:
+    from tgteacher_bot.db.schema_access import verify_only, verify_schema
+    if verify_only():
+        await verify_schema()
+        return
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
@@ -462,7 +466,12 @@ async def export_snapshots_xlsx(period: str) -> Optional[str]:
 # Джоба автоснимков и ретеншна
 async def auto_snapshot_job(context: ContextTypes.DEFAULT_TYPE):
     try:
-        if not context.application.bot_data.get('snapshots_auto_enabled', True):
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            enabled = await conn.fetchval("SELECT auto_snapshots FROM web_system_control WHERE singleton")
+        if enabled is None:
+            enabled = context.application.bot_data.get('snapshots_auto_enabled', True)
+        if not enabled:
             return
         await capture_and_store_snapshot(context)
     except Exception as e:

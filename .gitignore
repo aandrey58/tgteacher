@@ -30,3 +30,14 @@ Thumbs.db
 *.rar
 *.7z
 
+# Release secrets and private runtime state
+bot.env
+mcp.env
+bot/admins.txt
+*.dump
+*.sql.gz
+log.txt
+
+admin.env
+admin-web/node_modules/
+admin-web/dist/

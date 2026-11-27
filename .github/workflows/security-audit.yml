@@ -1,0 +1,124 @@
+name: Security and dependency audit
+
+on:
+  push:
+    branches: [english-adaptation]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-history:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan reachable Git history and current tree
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/tgt-scan" "$RUNNER_TEMP/tgt-evidence"
+          status=0
+          for mode in git dir; do
+            args=()
+            if [ "$mode" = git ]; then args+=(--log-opts=--all); fi
+            rc=0
+            docker run --rm --user "$(id -u):$(id -g)" \
+              -v "$PWD:/repo:ro" -v "$RUNNER_TEMP/tgt-scan:/out" \
+              ghcr.io/gitleaks/gitleaks:v8.30.1 "$mode" /repo \
+              "${args[@]}" --redact=100 --exit-code=42 \
+              --report-format=json --report-path="/out/$mode.json" \
+              > "$RUNNER_TEMP/tgt-scan/$mode.log" 2>&1 || rc=$?
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 42 ]; then
+              echo "Scanner execution failed ($mode, exit $rc). Raw output withheld."
+              status=1
+              continue
+            fi
+            python - "$RUNNER_TEMP/tgt-scan/$mode.json" "$RUNNER_TEMP/tgt-evidence/$mode.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          source, dest = map(Path, sys.argv[1:])
+          rows = json.loads(source.read_text()) if source.exists() else []
+          rows = rows or []
+          # Never publish Match, Secret, author, email, commit message or raw scanner logs.
+          safe = [{k: row.get(k) for k in ("RuleID", "File", "StartLine", "Commit", "Fingerprint")} for row in rows]
+          dest.write_text(json.dumps(safe, indent=2))
+          print(f"{source.stem}: {len(safe)} findings")
+          PY
+            if [ "$rc" -eq 42 ]; then status=1; fi
+          done
+          rm -rf "$RUNNER_TEMP/tgt-scan"
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: redacted-secret-audit
+          path: ${{ runner.temp }}/tgt-evidence/
+          if-no-files-found: error
+
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require committed resolved dependency locks
+        run: |
+          mkdir -p "$RUNNER_TEMP/tgt-deps"
+          python -m venv "$RUNNER_TEMP/tgt-tools"
+          "$RUNNER_TEMP/tgt-tools/bin/pip" install 'pip==25.2' 'pip-tools==7.5.2' 'pip-audit==2.9.0'
+          test -s requirements.lock
+          test -s admin-web/package-lock.json
+          cp requirements.lock "$RUNNER_TEMP/tgt-deps/requirements.lock"
+          cp admin-web/package-lock.json "$RUNNER_TEMP/tgt-deps/package-lock.json"
+          sha256sum "$RUNNER_TEMP/tgt-deps/"*.lock "$RUNNER_TEMP/tgt-deps/"*.json
+      - name: Verify locked installs and collect dependency inventories
+        run: |
+          python -m venv "$RUNNER_TEMP/tgt-app"
+          "$RUNNER_TEMP/tgt-app/bin/pip" install --require-hashes -r requirements.lock
+          "$RUNNER_TEMP/tgt-app/bin/pip" check
+          "$RUNNER_TEMP/tgt-app/bin/pip" list --format=json > "$RUNNER_TEMP/tgt-deps/python-inventory.json"
+          (cd admin-web && npm ci --no-audit --no-fund && npm run build && npm ls --all --json > "$RUNNER_TEMP/tgt-deps/npm-inventory.json")
+      - name: Audit Python and npm advisories
+        if: always()
+        run: |
+          test -s requirements.lock && test -s admin-web/package-lock.json
+          status=0
+          "$RUNNER_TEMP/tgt-tools/bin/pip-audit" --require-hashes -r requirements.lock --format=json --output="$RUNNER_TEMP/tgt-deps/python-audit.json" || status=1
+          (cd admin-web && npm audit --audit-level=high --json > "$RUNNER_TEMP/tgt-deps/npm-audit.json") || status=1
+          python - "$RUNNER_TEMP/tgt-deps" <<'PY'
+          import json,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          p=root/"python-audit.json"
+          n=root/"npm-audit.json"
+          if p.exists():
+              obj=json.loads(p.read_text())
+              for dep in obj.get("dependencies", []):
+                  for vuln in dep.get("vulns", []):
+                      print("Python",dep["name"],dep.get("version"),vuln["id"],"fix:",vuln.get("fix_versions",[]))
+          if n.exists():
+              obj=json.loads(n.read_text())
+              print("npm severities:",obj.get("metadata",{}).get("vulnerabilities",{}))
+              for name,vuln in sorted(obj.get("vulnerabilities",{}).items()):
+                  print("npm",name,vuln.get("severity"),"affected:",vuln.get("range"),"fix:",vuln.get("fixAvailable"))
+          PY
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-locks-and-audit
+          path: ${{ runner.temp }}/tgt-deps/
+          if-no-files-found: error

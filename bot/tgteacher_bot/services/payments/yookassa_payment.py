@@ -1,343 +1,177 @@
-import os
-import uuid
+"""YooKassa adapter with durable local orders and conservative unknown outcomes."""
 import asyncio
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+import os
+import logging
+from urllib.parse import urlsplit
 from yookassa import Payment, Configuration
-from yookassa.domain.request import PaymentRequest
-from yookassa.domain.models import Amount, Receipt, ReceiptItem
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
-
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from tgteacher_bot.db import payment_orders as orders
 from tgteacher_bot.db.pool import get_pool
-from tgteacher_bot.db.user_repo import get_user_subscription_info_pg, extend_user_subscription_pg
 from tgteacher_bot.handlers.admin.admin_status import track_metrics
 
+logger=logging.getLogger(__name__)
+
+def creation_enabled():
+    # Do not silently invent fiscal data. External fiscalization must be approved by merchant.
+    return os.getenv("TGTEACHER_YOOKASSA_CREATE","0")=="1" and os.getenv("TGTEACHER_YOOKASSA_RECEIPT_MODE")=="external"
 
 class YooKassaPayment:
-    """Класс для работы с ЮKassa"""
-    
     def __init__(self):
-        # Получаем настройки из переменных окружения
-        self.shop_id = os.getenv('YOOKASSA_SHOP_ID')
-        self.secret_key = os.getenv('YOOKASSA_SECRET_KEY')
-        self.return_url = os.getenv('YOOKASSA_RETURN_URL', 'https://t.me/your_bot_username')
-        
+        self.shop_id=os.getenv("YOOKASSA_SHOP_ID")
+        self.secret_key=os.getenv("YOOKASSA_SECRET_KEY")
+        self.return_url=os.getenv("YOOKASSA_RETURN_URL","")
         if not self.shop_id or not self.secret_key:
-            raise ValueError("YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY должны быть установлены в переменных окружения")
-        
-        # Инициализируем ЮKassa
-        Configuration.account_id = self.shop_id
-        Configuration.secret_key = self.secret_key
-    
-    async def create_payment(self, user_id: int, months: int, amount: int, description: str = None) -> Dict[str, Any]:
-        """
-        Создает платеж в ЮKassa
-        
-        Args:
-            user_id: ID пользователя в Telegram
-            months: Количество месяцев подписки
-            amount: Сумма в копейках (рубли * 100)
-            description: Описание платежа
-            
-        Returns:
-            Dict с информацией о платеже
-        """
-        try:
-            # Генерируем уникальный ID платежа
-            payment_id = str(uuid.uuid4())
-            
-            # Базовое описание + принудительное добавление UID
-            base_description = description or f"Подписка на {months} мес."
-            final_description = f"{base_description} | ID {user_id}"
-            
-            # Создаем чек для фискализации
-            receipt = Receipt(
-                customer={
-                    "email": f"user_{user_id}@telegram.local"  # Заглушка для email
-                },
-                items=[
-                    ReceiptItem(
-                        description=f"Подписка на {months} мес. | ID {user_id}",
-                        quantity=1,
-                        amount=Amount(
-                            value=str(amount / 100),  # Конвертируем копейки в рубли
-                            currency="RUB"
-                        ),
-                        vat_code=1,  # НДС 20%
-                        payment_subject="service",  # Услуга
-                        payment_mode="full_payment"  # Полная предварительная оплата
-                    )
-                ]
-            )
-            
-            # Создаем запрос на платеж
-            payment_request = PaymentRequest(
-                amount=Amount(
-                    value=str(amount / 100),  # Конвертируем копейки в рубли
-                    currency="RUB"
-                ),
-                confirmation={
-                    "type": "redirect",
-                    "return_url": self.return_url
-                },
-                capture=True,  # Автоматическое списание
-                description=final_description,
-                receipt=receipt,
-                metadata={
-                    "user_id": str(user_id),
-                    "months": str(months),
-                    "payment_type": "subscription"
-                }
-            )
-            
-            # Создаем платеж
-            payment = Payment.create(payment_request)
-            
-            # НЕ сохраняем в БД сразу - только после успешной оплаты
-            
-            return {
-                "payment_id": payment.id,
-                "status": payment.status,
-                "payment_url": payment.confirmation.confirmation_url,
-                "amount": amount,
-                "months": months
-            }
-            
-        except Exception as e:
-            print(f"Ошибка создания платежа: {e}")
-            raise
-    
-    async def check_payment_status(self, payment_id: str) -> Dict[str, Any]:
-        """
-        Проверяет статус платежа
-        
-        Args:
-            payment_id: ID платежа в ЮKassa
-            
-        Returns:
-            Dict с информацией о статусе платежа
-        """
-        try:
-            payment = Payment.find_one(payment_id)
-            
-            # Обновляем статус в БД
-            await self._update_payment_status(payment_id, payment.status)
-            
-            # Если платеж успешен, активируем подписку
-            if payment.status == "succeeded":
-                await self._activate_subscription(payment_id)
-            
-            return {
-                "payment_id": payment.id,
-                "status": payment.status,
-                "amount": payment.amount.value,
-                "currency": payment.amount.currency,
-                "metadata": payment.metadata
-            }
-            
-        except Exception as e:
-            print(f"Ошибка проверки статуса платежа: {e}")
-            raise
-    
-    async def _save_payment_to_db(self, payment_id: str, user_id: int, months: int, 
-                                 amount: int, status: str, payment_url: str):
-        """Сохраняет информацию о платеже в БД"""
-        try:
-            pool = await get_pool()
-            async with pool.acquire() as conn:
-                await conn.execute('''
-                    INSERT INTO payments (payment_id, user_id, months, amount, status, payment_url, created_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, NOW())
-                ''', payment_id, user_id, months, amount, status, payment_url)
-        except Exception as e:
-            print(f"Ошибка сохранения платежа в БД: {e}")
-            raise
-    
-    async def _update_payment_status(self, payment_id: str, status: str):
-        """Обновляет статус платежа в БД"""
-        try:
-            pool = await get_pool()
-            async with pool.acquire() as conn:
-                await conn.execute('''
-                    UPDATE payments SET status = $1, updated_at = NOW()
-                    WHERE payment_id = $2
-                ''', status, payment_id)
-        except Exception as e:
-            print(f"Ошибка обновления статуса платежа: {e}")
-            raise
-    
-    async def _activate_subscription(self, payment_id: str):
-        """Активирует подписку после успешной оплаты"""
-        try:
-            # Получаем информацию о платеже из YooKassa
-            payment = Payment.find_one(payment_id)
-            
-            # Извлекаем данные из metadata
-            user_id = int(payment.metadata.get('user_id'))
-            months = int(payment.metadata.get('months'))
-            amount = int(float(payment.amount.value) * 100)  # Конвертируем рубли в копейки
-            
-            pool = await get_pool()
-            async with pool.acquire() as conn:
-                # Создаем запись о платеже в БД только после успешной оплаты
-                payment_url = payment.confirmation.confirmation_url if payment.confirmation else None
-                await conn.execute('''
-                    INSERT INTO payments (payment_id, user_id, months, amount, status, payment_url, processed, created_at, updated_at, processed_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, true, NOW(), NOW(), NOW())
-                ''', payment_id, user_id, months, amount, payment.status, payment_url)
-                
-                # Продлеваем подписку пользователя
-                await extend_user_subscription_pg(user_id, months)
-                
-                # Читаем итоговую дату подписки из users
-                result_until = await conn.fetchval('SELECT subscription_until FROM users WHERE user_id = $1', user_id)
-                
-                # Обновляем запись с итоговой датой подписки
-                await conn.execute('''
-                    UPDATE payments 
-                    SET result_subscription_until = $2
-                    WHERE payment_id = $1
-                ''', payment_id, result_until)
-                
-                print(f"Подписка активирована для пользователя {user_id} на {months} месяцев")
-                    
-        except Exception as e:
-            print(f"Ошибка активации подписки: {e}")
-            raise
+            raise ValueError("YooKassa credentials required")
+        Configuration.configure(self.shop_id,self.secret_key)
 
+    async def create_payment(self,user_id,order_id):
+        if not creation_enabled():
+            raise orders.PaymentConflict("New payments disabled")
+        parsed=urlsplit(self.return_url)
+        if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password:
+            raise orders.PaymentConflict("HTTPS return URL required")
+        row,claimed=await orders.claim(user_id,order_id)
+        if not claimed:
+            return row
+        amount=row["amount"]
+        payload={"amount":{"value":f"{amount//100}.{amount%100:02d}","currency":"RUB"},
+                 "confirmation":{"type":"redirect","return_url":self.return_url},"capture":True,
+                 "description":f"Подписка на {row['months']} мес. | ID {user_id}",
+                 "metadata":{"order_id":str(row["id"]),"user_id":str(user_id),"months":str(row["months"]),"payment_type":"subscription"}}
+        try:
+            # SDK is synchronous. A timeout cannot prove the upstream request failed.
+            payment=await asyncio.wait_for(asyncio.to_thread(Payment.create,payload,str(row["id"])),25)
+            row=await orders.bind_created(user_id,order_id,payment)
+        except Exception:
+            await orders.mark_uncertain(user_id,order_id)
+            logger.warning("Payment creation needs reconciliation; order=%s",row["id"])
+            raise
+        if payment.status=="succeeded":
+            return await orders.settle(user_id,order_id,payment)
+        return row
 
-# Создаем глобальный экземпляр
-yookassa_payment = None
+    async def reconcile(self,user_id,order_id,provider_id,*,apply=False):
+        """Operator-only command; never create a charge or trust supplied metadata."""
+        row=await orders.get_order(user_id,order_id)
+        pid=str(orders.ident(provider_id))
+        if row["state"]=="prepared" or (row["provider_id"] and row["provider_id"]!=pid):
+            raise orders.PaymentConflict("Order is not eligible for reconciliation")
+        payment=await asyncio.wait_for(asyncio.to_thread(Payment.find_one,pid),25)
+        verified_id,state,_=orders.verified_remote(row,payment)
+        if verified_id!=pid:
+            raise orders.PaymentConflict("Provider lookup ID mismatch")
+        refunded=orders.verified_refund_total(row,payment)
+        if not apply:
+            return {"id":str(row["id"]),"state":row["state"],"provider_state":state,
+                    "provider_id":pid,"amount":row["amount"],"refunded_amount":refunded,"apply":False}
+        if not row["provider_id"]:
+            row=await orders.bind_created(user_id,order_id,payment)
+        return await orders.settle(user_id,order_id,payment)
 
-def get_yookassa_payment() -> YooKassaPayment:
-    """Получает экземпляр YooKassaPayment"""
+    async def inspect_legacy(self,provider_id):
+        pid=str(orders.ident(provider_id))
+        payment=await asyncio.wait_for(asyncio.to_thread(Payment.find_one,pid),25)
+        if str(orders.ident(payment.id))!=pid:
+            raise orders.PaymentConflict("Provider lookup ID mismatch")
+        # Read only. Historical paid rows may have been written before access was granted.
+        return {"local_ledger":await orders.legacy_record(pid),"provider_id":pid,
+                "provider_state":payment.status,"provider_paid":payment.paid,
+                "provider_amount":payment.amount.value,"provider_currency":payment.amount.currency,
+                "metadata_user_id":payment.metadata.get("user_id"),
+                "metadata_months":payment.metadata.get("months"),
+                "metadata_type":payment.metadata.get("payment_type"),
+                "refunded_amount":getattr(getattr(payment,"refunded_amount",None),"value",None)}
+
+    async def check_payment_status(self,user_id,order_id):
+        row=await orders.get_order(user_id,order_id)
+        if row["state"] in ("succeeded","canceled") or not row["provider_id"]:
+            return row
+        payment=await asyncio.wait_for(asyncio.to_thread(Payment.find_one,row["provider_id"]),25)
+        return await orders.settle(user_id,order_id,payment)
+
+yookassa_payment=None
+
+def get_yookassa_payment():
     global yookassa_payment
     if yookassa_payment is None:
-        yookassa_payment = YooKassaPayment()
+        yookassa_payment=YooKassaPayment()
     return yookassa_payment
 
+def private_owner(update):
+    user=update.effective_user
+    chat=update.effective_chat
+    return bool(user and chat and chat.type=="private" and chat.id==user.id)
+
+async def show_order(query,row):
+    oid=str(row["id"])
+    state=row["state"]
+    if row.get("refunded_amount",0)>0:
+        text=f"Заказ {oid}: зарегистрирован возврат. Для уточнения доступа обратитесь в поддержку."
+        buttons=[[InlineKeyboardButton("Поддержка",callback_data="help")]]
+    elif state=="succeeded":
+        text="✅ Оплата подтверждена, подписка была начислена."
+        buttons=[[InlineKeyboardButton("Моя подписка",callback_data="subscription")]]
+    elif state=="canceled":
+        text="Платёж отменён. Можно выбрать новый тариф."
+        buttons=[[InlineKeyboardButton("Выбрать тариф",callback_data="buy_subscription")]]
+    elif state in ("pending","waiting_for_capture"):
+        text=f"Заказ: {oid}\nСрок: {row['months']} мес.\nСумма: {row['amount']/100:.2f} ₽\nПлатёж ожидает подтверждения."
+        buttons=[]
+        # Do not advertise external checkout for Telegram digital content.
+        # Existing paid orders can still be checked/reconciled.
+        buttons.append([InlineKeyboardButton("Проверить оплату",callback_data="check_payment_"+oid)])
+    elif state in ("creating","uncertain"):
+        text=f"Заказ {oid}: результат создания не подтверждён. Не оплачивайте повторно. Обратитесь в поддержку с номером заказа."
+        buttons=[[InlineKeyboardButton("Поддержка",callback_data="help")],[InlineKeyboardButton("Проверить заказ",callback_data="check_payment_"+oid)]]
+    else:
+        text="Заказ ещё не подтверждён."
+        buttons=[[InlineKeyboardButton("Подтвердить",callback_data="confirm_payment_"+oid)]]
+    buttons.append([InlineKeyboardButton("Назад",callback_data="subscription")])
+    await query.edit_message_text(text,reply_markup=InlineKeyboardMarkup(buttons))
+
+async def show_error(query,order_id=None):
+    buttons=[]
+    if order_id:
+        buttons.append([InlineKeyboardButton("Проверить заказ",callback_data="check_payment_"+str(order_id))])
+    buttons.extend([[InlineKeyboardButton("Поддержка",callback_data="help")],[InlineKeyboardButton("К подписке",callback_data="subscription")]])
+    await query.edit_message_text("Не удалось подтвердить операцию. Если платёж уже был создан, не оплачивайте повторно; проверьте заказ или обратитесь в поддержку.",reply_markup=InlineKeyboardMarkup(buttons))
 
 @track_metrics
-async def create_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик создания платежа"""
-    query = update.callback_query
-    await query.answer()
-    
-    # Парсим callback_data: confirm_payment_{months}_{amount}
-    callback_data = query.data
-    parts = callback_data.split('_')
-    
-    if len(parts) != 4:
-        await query.edit_message_text('❌ Ошибка: неверный формат данных')
+async def create_payment_callback(update,context):
+    query=update.callback_query
+    if not private_owner(update):
+        await query.answer("Оплата доступна только в личном чате.",show_alert=True)
         return
-    
+    await query.answer()
+    oid=None
     try:
-        months = int(parts[2])
-        amount = int(parts[3])  # Сумма в рублях
-        user_id = query.from_user.id
-        
-        # Конвертируем рубли в копейки для ЮKassa
-        amount_kopecks = amount * 100
-        
-        # Создаем платеж
-        payment_system = get_yookassa_payment()
-        payment_info = await payment_system.create_payment(
-            user_id=user_id,
-            months=months,
-            amount=amount_kopecks,
-            description=f"Подписка на {months} месяцев"
-        )
-        
-        # Создаем кнопку для оплаты
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton('💳 Оплатить', url=payment_info['payment_url'])],
-            [InlineKeyboardButton('🔄 Проверить оплату', callback_data=f'check_payment_{payment_info["payment_id"]}')],
-            [InlineKeyboardButton('⬅️ Назад', callback_data='buy_subscription')]
-        ])
-        
-        text = f'💳 <b>Оплата подписки</b>\n\n'
-        text += f'Сумма к оплате: <b>{amount}₽</b>\n'
-        text += f'Срок подписки: <b>{months} мес.</b>\n\n'
-        text += f'Нажмите кнопку "Оплатить" для перехода к оплате.\n'
-        text += f'После оплаты нажмите "Проверить оплату".'
-        
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
-        
-    except Exception as e:
-        print(f"Ошибка создания платежа: {e}")
-        text = '❌ <b>Ошибка создания платежа</b>\n\nНе удалось создать платеж. Попробуйте позже.'
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton('⬅️ Назад', callback_data='buy_subscription')]
-        ])
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
-
+        oid=orders.ident(query.data.removeprefix("confirm_payment_"))
+        # Telegram digital subscriptions require Stars. Keep external payment
+        # service available only for a separately approved independent checkout.
+        row=await orders.get_order(query.from_user.id,oid)
+        if row["state"]=="prepared":
+            await query.edit_message_text("Новые покупки временно недоступны.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("К подписке",callback_data="subscription")]]))
+            return
+        await show_order(query,row)
+    except Exception:
+        await show_error(query,oid)
 
 @track_metrics
-async def check_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик проверки статуса платежа"""
-    query = update.callback_query
-    await query.answer()
-    
-    # Парсим callback_data: check_payment_{payment_id}
-    callback_data = query.data
-    parts = callback_data.split('_')
-    
-    if len(parts) != 3:
-        await query.edit_message_text('❌ Ошибка: неверный формат данных')
+async def check_payment_callback(update,context):
+    query=update.callback_query
+    if not private_owner(update):
+        await query.answer("Проверка доступна только в личном чате.",show_alert=True)
         return
-    
-    payment_id = parts[2]
-    
+    await query.answer()
+    oid=None
     try:
-        # Проверяем статус платежа
-        payment_system = get_yookassa_payment()
-        payment_status = await payment_system.check_payment_status(payment_id)
-        
-        if payment_status['status'] == 'succeeded':
-            # Платеж успешен
-            text = '✅ <b>Оплата прошла успешно!</b>\n\n'
-            text += f'Ваша подписка активирована.\n'
-            text += f'Спасибо за покупку!'
-            
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton('💎 Моя подписка', callback_data='subscription')],
-                [InlineKeyboardButton('🏠 Главное меню', callback_data='main_menu')]
-            ])
-            
-        elif payment_status['status'] == 'pending':
-            # Платеж в обработке
-            text = '⏳ <b>Платеж в обработке</b>\n\n'
-            text += f'Ваш платеж обрабатывается.\n'
-            text += f'Попробуйте проверить статус через несколько минут.'
-            
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton('🔄 Проверить снова', callback_data=f'check_payment_{payment_id}')],
-                [InlineKeyboardButton('⬅️ Назад', callback_data='buy_subscription')]
-            ])
-            
-        else:
-            # Платеж не прошел
-            text = '❌ <b>Платеж не прошел</b>\n\n'
-            text += f'Статус: {payment_status["status"]}\n'
-            text += f'Попробуйте оплатить снова.'
-            
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton('💳 Попробовать снова', callback_data='buy_subscription')],
-                [InlineKeyboardButton('⬅️ Назад', callback_data='subscription')]
-            ])
-        
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
-        
-    except Exception as e:
-        print(f"Ошибка проверки платежа: {e}")
-        text = '❌ <b>Ошибка проверки платежа</b>\n\nНе удалось проверить статус платежа. Попробуйте позже.'
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton('🔄 Попробовать снова', callback_data=f'check_payment_{payment_id}')],
-            [InlineKeyboardButton('⬅️ Назад', callback_data='buy_subscription')]
-        ])
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
-
+        oid=orders.ident(query.data.removeprefix("check_payment_"))
+        row=await orders.get_order(query.from_user.id,oid)
+        if row["provider_id"] and row["state"] not in ("succeeded","canceled"):
+            row=await get_yookassa_payment().check_payment_status(query.from_user.id,oid)
+        await show_order(query,row)
+    except Exception:
+        await show_error(query,oid)
 
 async def setup_payment_table():
     """Создает таблицу для хранения платежей"""

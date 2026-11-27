@@ -18,12 +18,15 @@ from dotenv import find_dotenv, load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
 )
 
 from tgteacher_bot.core import paths
+from tgteacher_bot.core.learning_session import LearningApplication
+from tgteacher_bot.core.admin_guard import AdminRegistration, is_admin
 from tgteacher_bot.handlers.admin.admin_panel import get_admin_families_menu, get_admin_menu, register_admin_handlers
 from tgteacher_bot.handlers.admin.admin_status import track_metrics
 from tgteacher_bot.handlers.admin.admin_status_info import register_status_info_handlers
@@ -63,16 +66,37 @@ logging.basicConfig(
 
 # Keep runtime log file behaviour (relative path), but default it to project root if run from elsewhere.
 log_file_handler = RotatingFileHandler(
-    "log.txt", maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+    os.path.join(os.environ["TGTEACHER_RUNTIME_DIR"], "log.txt") if os.getenv("TGTEACHER_RUNTIME_DIR") else "log.txt",
+    maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
 )
 log_file_handler.setFormatter(
     logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 )
 logging.getLogger().addHandler(log_file_handler)
+from tgteacher_bot.services.legacy.safe_events import install as install_safe_events
+install_safe_events()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+# Prefixes reserved exclusively for the retired administrative UI.
+LEGACY_ADMIN_CALLBACK = r"^(?:admin_|snapshots_|status_info_|payment_option_)"
+ 
+ 
+async def _legacy_admin_retired(update, context):
+    # Respond to stale Telegram keyboards before any generic catalog refresh.
+    if not is_admin(update):
+        await update.callback_query.answer("Недостаточно прав.", show_alert=True)
+    else:
+        await update.callback_query.answer("Админ-панель перенесена в веб. Откройте главное меню.", show_alert=True)
+    raise ApplicationHandlerStop
+ 
+ 
+async def _noop_callback(update, context):
+    # Learner pagination must not depend on legacy admin registration.
+    await update.callback_query.answer()
+ 
+ 
 def get_main_menu(user_id=None):
     admin_ids = set()
     try:
@@ -84,14 +108,17 @@ def get_main_menu(user_id=None):
         [InlineKeyboardButton("▶️ Начать обучение", callback_data="start_learning")],
         [InlineKeyboardButton("📚 Выбрать группу слов", callback_data="choose_family")],
         [InlineKeyboardButton("📈 Мой прогресс", callback_data="my_progress")],
+        [InlineKeyboardButton("🔁 Повторить слова", callback_data="srs_next")],
         [InlineKeyboardButton("💎 Подписка", callback_data="subscription")],
         [InlineKeyboardButton("🆘 Помощь", callback_data="help")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
     ]
     if user_id and str(user_id) in admin_ids:
-        buttons.append(
-            [InlineKeyboardButton("🛠️ Админ-панель", callback_data="admin_panel")]
-        )
+        web_url = os.getenv("TGTEACHER_WEB_ADMIN_URL", "")
+        if web_url.startswith("https://"):
+            buttons.append([InlineKeyboardButton("🛠️ Веб-админка", url=web_url)])
+        if os.getenv("TGTEACHER_LEGACY_ADMIN", "1") == "1":
+            buttons.append([InlineKeyboardButton("🛠️ Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -106,23 +133,22 @@ def clear_stage_user_data(context):
 @track_metrics
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await mark_user_active_if_needed(user_id, context)
     username = update.effective_user.username or ""
     first_name = update.effective_user.first_name or ""
     last_name = update.effective_user.last_name or ""
-    await add_or_update_user_pg(user_id, username, first_name, last_name)
-
-    try:
-        from tgteacher_bot.services.legacy.legacy_users_collector import save_user_to_legacy_file
-
-        save_user_to_legacy_file(user_id, username, first_name, last_name)
-    except Exception as e:
-        logger.error(f"Ошибка при сборе данных пользователя {user_id} в start: {e}")
+    private = bool(update.effective_chat and update.effective_chat.type=="private" and update.effective_chat.id==user_id)
+    registration = await add_or_update_user_pg(user_id, username, first_name, last_name, allow_rejoin=private)
+    if registration=="blocked":
+        await update.message.reply_text("Для повторной регистрации откройте личный чат с ботом и отправьте /start.")
+        return
+    if registration=="rejoined":
+        context.user_data.clear()
+    await mark_user_active_if_needed(user_id, context)
 
     if first_name:
         welcome_text = (
             f"Здравствуйте, {first_name}!\n\n"
-            "Добро пожаловать в бот для изучения немецкого языка. Здесь вы сможете эффективно расширить свой словарный запас.\n\n"
+            "Добро пожаловать в бот для изучения английского языка. Здесь вы сможете эффективно расширить свой словарный запас.\n\n"
             "Пожалуйста, выберите один из пунктов меню, чтобы начать."
         )
     else:
@@ -213,22 +239,46 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             pass
 
 
+async def _refresh_catalog_callback(update, context):
+    from tgteacher_bot.utils.families_data import refresh_families_meta
+    await refresh_families_meta()
+
+
+async def _guard_archived_stage_callback(update, context):
+    from tgteacher_bot.db.families_repo import get_family_data_pg
+    family_id = context.user_data.get('current_family_idx') or await get_current_family_idx_pg(update.effective_user.id)
+    if family_id and not await get_family_data_pg(family_id):
+        await update.callback_query.answer('Группа в архиве или недоступна. Прогресс сохранён.', show_alert=True)
+        raise ApplicationHandlerStop
+
+
 def _register_handlers(application: Application):
+    application.add_handler(CallbackQueryHandler(_guard_archived_stage_callback, pattern=r'^stage[1-8]_'), group=-3)
+    application.add_handler(CallbackQueryHandler(_refresh_catalog_callback), group=-2)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
+    application.add_handler(CallbackQueryHandler(_noop_callback, pattern="^noop$"))
 
+    from tgteacher_bot.handlers.user.reviews import register_review_handlers
+    register_review_handlers(application)
     register_family_handlers(application)
     register_progress_handlers(application)
     register_settings_handlers(application)
     register_help_handlers(application)
     register_subscription_handlers(application)
-    register_admin_handlers(application)
-    register_status_info_handlers(application)
-    register_admin_users_handlers(application)
+    if os.getenv("TGTEACHER_LEGACY_ADMIN", "1") == "1":
+        guarded = AdminRegistration(application)
+        register_admin_handlers(guarded)
+        register_status_info_handlers(guarded)
+        register_admin_users_handlers(guarded)
+    else:
+        application.add_handler(CallbackQueryHandler(_legacy_admin_retired, pattern=LEGACY_ADMIN_CALLBACK), group=-4)
 
 
 async def _post_startup(application: Application):
     await init_db_pg()
+    from tgteacher_bot.utils.families_data import refresh_families_meta
+    await refresh_families_meta()
     try:
         await init_system_snapshots_pg()
     except Exception:
@@ -238,6 +288,10 @@ async def _post_startup(application: Application):
     try:
         jobq = application.job_queue
         if jobq:
+            from tgteacher_bot.db.web_operations import delivery_job, snapshot_job, admin_list_job
+            jobq.run_repeating(delivery_job, interval=5, first=5, job_kwargs={'max_instances':1})
+            jobq.run_repeating(snapshot_job, interval=10, first=10, job_kwargs={'max_instances':1})
+            jobq.run_repeating(admin_list_job, interval=10, first=10, job_kwargs={'max_instances':1})
             jobq.run_repeating(
                 auto_snapshot_job, interval=AUTO_SNAPSHOT_INTERVAL_SECONDS, first=10
             )
@@ -249,13 +303,19 @@ async def _post_startup(application: Application):
         logger.exception("Failed to register jobs")
 
 
+async def _post_shutdown(application: Application):
+    from tgteacher_bot.db.pool import close_pool
+    await close_pool()
+
+
 def build_application() -> Application:
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN is not set in environment (.env)")
-    application = Application.builder().token(token).build()
+    application = Application.builder().application_class(LearningApplication).token(token).build()
     _register_handlers(application)
     application.post_init = _post_startup
+    application.post_shutdown = _post_shutdown
     return application
 
 

@@ -45,15 +45,12 @@ async def subscription_callback(update: Update, context: ContextTypes.DEFAULT_TY
     until_str = _format_date(until)
     left_str = f"({_format_timedelta(until)})" if until else ''
 
-    # Новое описание подписки
     text = (
         '<b>💎 Подписка</b>\n\n'
         f"<b>Статус:</b> {status_line}\n"
-        f"<b>Действует до:</b> {until_str} {left_str}\n\n"
-        'В настоящее время реализован один вариант платной подписки:\n\n'
-        '- 3 месяца\n'
-        'Покупая подписку, вы получаете доступ к заданиям всех существующих групп слов, и дополнительно получаете 3 дополнительных типа заданий для отработки лексики: визуальный квиз, задание на аудирование, дополнительное задание на подбор слова в предложении. Новая группа слова появляется в боте примерно один раз в месяц.   \n\n'
-        'Стоимость подписки составляет 300 рублей. Стоимость латте 🥤🥤🥤'
+        f"<b>Действует до:</b> {('Бессрочно' if is_subscribed and until is None else until_str)} {left_str}\n\n"
+        'VIP открывает доступ к дополнительным учебным материалам. '
+        'Актуальные сроки и стоимость указаны в списке тарифов.'
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -69,53 +66,19 @@ async def subscription_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def buy_subscription_placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
-    try:
-        from tgteacher_bot.db.pool import get_pool
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch('SELECT months, amount FROM payment_options ORDER BY months')
-            
-        if not rows:
-            text = '❌ <b>Варианты оплаты недоступны</b>\n\nК сожалению, варианты оплаты временно недоступны.\nПопробуйте позже.'
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton('⬅️ Назад', callback_data='subscription')]
-            ])
-        else:
-            text = '💳 <b>Выберите срок и сумму подписки</b>\n\nВыберите подходящий для Вас вариант:'
-            buttons = []
-            
-            # Создаем кнопки подписки в 2 столбика
-            for i in range(0, len(rows), 2):
-                row_buttons = []
-                months = rows[i]['months']
-                amount = rows[i]['amount']
-                button_text = f'💎 {months} мес. - {amount}₽'
-                callback_data = f'buy_option_{months}_{amount}'
-                row_buttons.append(InlineKeyboardButton(button_text, callback_data=callback_data))
-                
-                # Добавляем вторую кнопку в строку, если есть
-                if i + 1 < len(rows):
-                    months2 = rows[i + 1]['months']
-                    amount2 = rows[i + 1]['amount']
-                    button_text2 = f'💎 {months2} мес. - {amount2}₽'
-                    callback_data2 = f'buy_option_{months2}_{amount2}'
-                    row_buttons.append(InlineKeyboardButton(button_text2, callback_data=callback_data2))
-                
-                buttons.append(row_buttons)
-            
-            # Добавляем кнопку "Назад" внизу
-            buttons.append([InlineKeyboardButton('⬅️ Назад', callback_data='subscription')])
-            keyboard = InlineKeyboardMarkup(buttons)
-            
-    except Exception as e:
-        text = '❌ <b>Ошибка загрузки</b>\n\nНе удалось загрузить варианты оплаты.\nПопробуйте позже.'
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton('⬅️ Назад', callback_data='subscription')]
-        ])
-    
-    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
-
+    from tgteacher_bot.services.payments.yookassa_payment import private_owner
+    from tgteacher_bot.db.payment_orders import open_orders
+    if not private_owner(update):
+        return
+    from tgteacher_bot.handlers.user.stars import enabled
+    from tgteacher_bot.db.stars_repo import tariffs
+    active=await open_orders(query.from_user.id)
+    options=await tariffs() if enabled() else []
+    buttons=[[InlineKeyboardButton(f"{r['months']} мес. · {r['amount']} ⭐",callback_data=f"stars_buy_{r['months']}_{r['amount']}")] for r in options]
+    buttons.extend([[InlineKeyboardButton("Прежний заказ "+str(row["id"])[:8],callback_data="check_payment_"+str(row["id"]))] for row in active])
+    buttons.append([InlineKeyboardButton("Назад",callback_data="subscription")])
+    text="Выберите разовую покупку VIP за Telegram Stars." if options else "Новые покупки временно недоступны."
+    await query.edit_message_text(text,reply_markup=InlineKeyboardMarkup(buttons))
 
 @track_metrics
 async def buy_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -123,34 +86,7 @@ async def buy_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     
-    # Парсим callback_data: buy_option_{months}_{amount}
-    callback_data = query.data
-    parts = callback_data.split('_')
-    
-    if len(parts) != 4:
-        await query.edit_message_text('❌ Ошибка: неверный формат данных')
-        return
-    
-    try:
-        months = int(parts[2])
-        amount = int(parts[3])
-    except ValueError:
-        await query.edit_message_text('❌ Ошибка: неверные данные')
-        return
-    
-    # Показываем информацию о выбранном варианте
-    text = f'💳 <b>Подтверждение покупки</b>\n\n'
-    text += f'Вы выбрали подписку:\n'
-    text += f'<b>Срок:</b> {months} мес.\n'
-    text += f'<b>Стоимость:</b> {amount}₽\n\n'
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton('✅ Подтвердить', callback_data=f'confirm_payment_{months}_{amount}')],
-        [InlineKeyboardButton('⬅️ Назад', callback_data='buy_subscription')]
-    ])
-    
-    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
-
+    await query.edit_message_text("Новые покупки временно недоступны.",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("К подписке",callback_data="subscription")]]))
 
 @track_metrics
 async def confirm_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -173,19 +109,18 @@ async def subscription_history_placeholder(update: Update, context: ContextTypes
         async with pool.acquire() as conn:
             # Получаем историю платежей пользователя
             rows = await conn.fetch('''
-                SELECT payment_id, months, amount, status, created_at, processed
-                FROM payments 
-                WHERE user_id = $1 
-                ORDER BY created_at DESC 
-                LIMIT 10
+                SELECT * FROM (
+                    SELECT payment_id,months,amount,status,created_at,'RUB' AS currency FROM payments WHERE user_id=$1
+                    UNION ALL SELECT charge_id,months,amount,state,coalesce(paid_at,refunded_at),'XTR'
+                    FROM stars_orders WHERE user_id=$1 AND state IN ('paid','refunded')
+                ) p ORDER BY created_at DESC LIMIT 10
             ''', user_id)
             
             # Получаем общую статистику
             stats = await conn.fetchrow('''
                 SELECT 
-                    COUNT(*) as total_payments
-                FROM payments 
-                WHERE user_id = $1
+                    (SELECT count(*) FROM payments WHERE user_id=$1)+
+                    (SELECT count(*) FROM stars_orders WHERE user_id=$1 AND state IN ('paid','refunded')) AS total_payments
             ''', user_id)
             
         if not rows:
@@ -208,10 +143,11 @@ async def subscription_history_placeholder(update: Update, context: ContextTypes
             # Последние платежи
             text += f'<b>Последние платежи:</b>\n'
             for i, row in enumerate(rows[:5], 1):  # Показываем только 5 последних
-                amount_rub = row['amount'] / 100
+                price = f"{row['amount']} ⭐" if row['currency']=='XTR' else f"{row['amount']/100:.2f} ₽"
+                suffix = ' · возврат' if row['status']=='refunded' else ''
                 date = row['created_at'].strftime('%d.%m.%Y %H:%M')
                 # Без эмодзи статусов и обработанности
-                text += f'{i}. {date} - {amount_rub}₽ ({row["months"]} мес.)\n'
+                text += f'{i}. {date} - {price} ({row["months"]} мес.){suffix}\n'
             
             remaining = max(0, (total_payments or 0) - 5)
             if remaining > 0:
@@ -233,6 +169,8 @@ async def subscription_history_placeholder(update: Update, context: ContextTypes
 
 
 def register_subscription_handlers(application: Application):
+    from tgteacher_bot.handlers.user.stars import register
+    register(application)
     application.add_handler(CallbackQueryHandler(subscription_callback, pattern='^subscription$'))
     application.add_handler(CallbackQueryHandler(buy_subscription_placeholder, pattern='^buy_subscription$'))
     application.add_handler(CallbackQueryHandler(buy_option_callback, pattern='^buy_option_'))

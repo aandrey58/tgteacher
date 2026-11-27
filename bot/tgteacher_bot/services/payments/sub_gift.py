@@ -3,7 +3,8 @@ from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, fil
 from tgteacher_bot.db.user_repo import get_pool
 from datetime import datetime, timedelta
 import asyncio
-from math import ceil
+import uuid
+from tgteacher_bot.db import web_operations as ops
 
 # MCP: Состояния для управления подписками
 AWAITING_SUBSCRIPTION_DAYS = 'awaiting_subscription_days'
@@ -15,6 +16,7 @@ async def gift_subscription_callback(update: Update, context: ContextTypes.DEFAU
     
     # Извлекаем user_id из callback_data
     user_id = int(query.data.replace('admin_gift_subscription_', ''))
+    clear_gift_subscription_context(context.user_data)
     context.user_data['gift_subscription_user_id'] = user_id
     
     # Сохраняем информацию о том, откуда пришли
@@ -113,6 +115,8 @@ async def gift_subscription_message(update: Update, context: ContextTypes.DEFAUL
     
     # Сохраняем количество дней
     context.user_data['gift_subscription_days'] = days
+    operation=uuid.uuid4().hex
+    context.user_data['gift_subscription_operation'] = operation
     
     # MCP: Удаляем сообщение-инструкцию, если есть message_id
     instruction_message_id = context.user_data.get('gift_subscription_instruction_message_id')
@@ -126,7 +130,7 @@ async def gift_subscription_message(update: Update, context: ContextTypes.DEFAUL
     # Показываем подтверждение
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton('✅ Да, подарить', callback_data=f'admin_gift_subscription_confirm_{user_id}_{days}')
+            InlineKeyboardButton('✅ Да, подарить', callback_data='admin_gift_subscription_confirm_'+operation)
             ,InlineKeyboardButton('❌ Нет, отмена', callback_data='admin_gift_subscription_cancel')
         ]
     ])
@@ -147,92 +151,23 @@ async def gift_subscription_confirm_callback(update: Update, context: ContextTyp
     query = update.callback_query
     await query.answer()
     
-    # Извлекаем данные из callback_data
-    data = query.data.replace('admin_gift_subscription_confirm_', '')
-    user_id, days = map(int, data.split('_'))
-    
+    # Short one-use confirmation bound to current admin session and gift.
+    operation=query.data.removeprefix("admin_gift_subscription_confirm_")
+    user_id=context.user_data.get("gift_subscription_user_id")
+    days=context.user_data.get("gift_subscription_days")
+    if not user_id or not days or operation!=context.user_data.get("gift_subscription_operation"):
+        await query.edit_message_text("Подтверждение устарело. Начните операцию заново.")
+        return
     try:
-        # Обновляем подписку в базе данных
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            # Получаем текущую информацию о пользователе
-            user = await conn.fetchrow('SELECT is_subscribed, subscription_count, subscription_until FROM users WHERE user_id = $1', user_id)
-            if not user:
-                await query.edit_message_text('❌ Пользователь не найден')
-                return
-            
-            # Вычисляем новую дату окончания подписки
-            from datetime import timezone
-            moscow_tz = timezone(timedelta(hours=3))
-            now = datetime.now(moscow_tz)
-            
-            if user['is_subscribed']:
-                current_end = user['subscription_until']
-                if current_end and current_end > now:
-                    new_end = current_end + timedelta(days=days)
-                else:
-                    new_end = now + timedelta(days=days)
-            else:
-                new_end = now + timedelta(days=days)
-            
-            # Обновляем данные пользователя
-            await conn.execute('''
-                UPDATE users 
-                SET is_subscribed = TRUE, 
-                    subscription_count = subscription_count + 1,
-                    subscription_until = $2
-                WHERE user_id = $1
-            ''', user_id, new_end)
+        await ops.subscription([user_id],days=days,operation_id=str(uuid.UUID(operation)))
+        clear_gift_subscription_context(context.user_data)
+        context.user_data.pop("gift_subscription_operation",None)
+        await query.edit_message_text(f"✅ VIP подарен пользователю {user_id} на {days} дней.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Готово",callback_data=f"admin_user_{user_id}")]]))
+    except Exception:
+        await query.edit_message_text("Не удалось подтвердить подарок. Проверьте профиль и историю, прежде чем повторять.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Профиль",callback_data=f"admin_user_{user_id}")]]))
 
-            # MCP: Гарантируем, что таблица payments существует
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS payments (
-                    id SERIAL PRIMARY KEY,
-                    payment_id VARCHAR(255) UNIQUE NOT NULL,
-                    user_id BIGINT NOT NULL,
-                    months INTEGER NOT NULL,
-                    amount INTEGER NOT NULL,
-                    status VARCHAR(50) NOT NULL,
-                    payment_url TEXT,
-                    processed BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT NOW(),
-                    updated_at TIMESTAMP DEFAULT NOW(),
-                    processed_at TIMESTAMP
-                )
-            ''')
-
-            # MCP: Фиксируем запись об оплате как "подарок" (0 рублей)
-            gifted_months = max(1, ceil(days / 30))
-            gift_payment_id = f'gift_{user_id}_{int(datetime.now().timestamp())}'
-            await conn.execute('''
-                INSERT INTO payments (payment_id, user_id, months, amount, status, processed, created_at, updated_at, processed_at, result_subscription_until)
-                VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW(), $7)
-            ''', gift_payment_id, user_id, gifted_months, 0, 'gift', True, new_end)
-        
-        # Показываем успешное сообщение
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton('✅ Готово', callback_data=f'admin_user_{user_id}')]
-        ])
-        
-        await query.edit_message_text(
-            f'🎁 <b>Подписка успешно подарена!</b>\n\n'
-            f'Пользователю <b>{user_id}</b> активирована подписка на <b>{days}</b> дней.\n'
-            f'Дата окончания: <b>{new_end.strftime("%d.%m.%Y %H:%M")}</b>',
-            reply_markup=keyboard,
-            parse_mode='HTML'
-        )
-        
-    except Exception as e:
-        print(f'MCP ERROR: Ошибка при подарке подписки: {e}')
-        await query.edit_message_text(
-            '❌ Произошла ошибка при активации подписки. Попробуйте позже.',
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton('⬅️ Назад', callback_data=f'admin_user_{user_id}')]
-            ])
-        )
-    
-    # Чистим контекст
-    clear_gift_subscription_context(context.user_data)
 
 async def remove_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик кнопки '❌ Удалить подписку'"""
@@ -313,14 +248,14 @@ async def return_to_user_profile(update, context, user_id):
 
 def clear_gift_subscription_context(user_data):
     """Очистка контекста подарка подписки"""
-    for key in ['gift_subscription_user_id', 'gift_subscription_days', 'gift_subscription_source', AWAITING_SUBSCRIPTION_DAYS, 'gift_subscription_instruction_message_id']:
+    for key in ['gift_subscription_user_id', 'gift_subscription_days', 'gift_subscription_source', AWAITING_SUBSCRIPTION_DAYS, 'gift_subscription_instruction_message_id', 'gift_subscription_operation']:
         user_data.pop(key, None)
 
 def register_sub_gift_handlers(application):
     """Регистрация обработчиков управления подписками"""
     application.add_handler(CallbackQueryHandler(gift_subscription_callback, pattern='^admin_gift_subscription_\\d+$'))
     application.add_handler(CallbackQueryHandler(gift_subscription_cancel_callback, pattern='^admin_gift_subscription_cancel$'))
-    application.add_handler(CallbackQueryHandler(gift_subscription_confirm_callback, pattern='^admin_gift_subscription_confirm_\\d+_\\d+$'))
+    application.add_handler(CallbackQueryHandler(gift_subscription_confirm_callback, pattern=r'^admin_gift_subscription_confirm_(?:[0-9a-f]{32}|[0-9]+_[0-9]+)$'))
     application.add_handler(CallbackQueryHandler(remove_subscription_callback, pattern='^admin_remove_subscription_\\d+$'))
     application.add_handler(CallbackQueryHandler(remove_subscription_confirm_callback, pattern='^admin_remove_subscription_confirm_\\d+$'))
     application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & (~filters.COMMAND), gift_subscription_message), group=996) 

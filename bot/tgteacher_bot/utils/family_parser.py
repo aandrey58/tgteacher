@@ -6,7 +6,12 @@ VALID_TARGETS = {"FREE", "VIP", "VIP+FREE"}
 
 def parse_family_txt(filepath: str) -> Dict[str, Any]:
     with open(filepath, encoding='utf-8') as f:
-        lines = [line.strip() for line in f if line.strip() and not line.strip().startswith('//')]
+        return parse_family_text(f.read())
+
+
+def parse_family_text(text: str) -> Dict[str, Any]:
+    lines = [line.strip() for line in text.splitlines()
+             if line.strip() and not line.strip().startswith('//')]
 
     family = {
         'name': None, 'description': None, 'words': [], 
@@ -163,6 +168,9 @@ def parse_family_txt(filepath: str) -> Dict[str, Any]:
             if line.startswith('#TASK'):
                 if s7_current_task: family['stage7_tasks'].append(s7_current_task)
                 s7_current_task = {}
+                prompt = line.removeprefix('#TASK').strip()
+                if prompt:
+                    s7_current_task['task'] = prompt
             elif line.startswith('#AUDIO'):
                 s7_current_task['audio'] = line.replace('#AUDIO', '').strip()
             elif line.startswith('#ANSWER'):
@@ -211,6 +219,16 @@ def parse_family_txt(filepath: str) -> Dict[str, Any]:
     
     if not family['name']: raise ValueError('Не найден #FAMILY в файле')
     if not family['words']: raise ValueError('Нет ни одного слова в группе словы')
+
+    # A malformed cloze must not reach the database or learner.
+    for task in family['stage8_tasks']:
+        gaps = task['text'].count('___')
+        answers = task.get('answers', [])
+        if not gaps or gaps != len(answers) or any(not a.strip() for a in answers):
+            raise ValueError(
+                f"Этап 8: количество пропусков ({gaps}) должно совпадать "
+                f"с количеством непустых ответов ({len(answers)})"
+            )
 
     return family
 

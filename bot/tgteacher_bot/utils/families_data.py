@@ -13,6 +13,10 @@ ALL_FAMILIES_META: List[Dict[str, Any]] = []
 async def _load_initial_families_meta():
     global ALL_FAMILIES_META
     await init_db_pg()
+    await refresh_families_meta()
+
+async def refresh_families_meta():
+    global ALL_FAMILIES_META
     ALL_FAMILIES_META = await get_all_families_meta_pg()
     # MCP DEBUG принты удалены
 

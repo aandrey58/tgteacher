@@ -1,38 +1,106 @@
 services:
   db:
-    image: postgres:16
-    container_name: tgteacher-db
+    image: tgteacher-postgres:16-patched
+    build:
+      context: ./postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-tgteacher}
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   bot:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: tgteacher-bot
+      target: bot-runtime
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    env_file: ./bot.env
     environment:
-      BOT_TOKEN: ${BOT_TOKEN}
-      HELP_QUESTIONS_GROUP_ID: ${HELP_QUESTIONS_GROUP_ID:-}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-tgteacher}
       POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
+      POSTGRES_PORT: "5432"
+      TGTEACHER_ADMINS_PATH: /app/runtime_cache/admins.txt
+      TGTEACHER_RUNTIME_DIR: /app/runtime_cache
+      TGTEACHER_LEGACY_ADMIN: ${TGTEACHER_LEGACY_ADMIN:-1}
+      TGTEACHER_WEB_SUPPORT: ${TGTEACHER_WEB_SUPPORT:-0}
+      TGTEACHER_WEB_ADMIN_URL: ${TGTEACHER_WEB_ADMIN_URL:-}
     volumes:
       - ./families:/app/families
       - ./bot/exports:/app/bot/exports
       - ./runtime_cache:/app/runtime_cache
 
+  mcp:
+    build: .
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "tgteacher_bot.mcp_server"]
+    env_file: ./mcp.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-tgteacher}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      TGTEACHER_MCP_HOST: "0.0.0.0"
+      TGTEACHER_MCP_PORT: "8000"
+    ports:
+      - "127.0.0.1:${MCP_HOST_PORT:-8000}:8000"
+    volumes:
+      - ./families:/app/families:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  admin:
+    profiles: ["web"]
+    build:
+      context: .
+      dockerfile: admin-web/Dockerfile
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: ./admin.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-tgteacher}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      TGTEACHER_ADMINS_PATH: /app/runtime_cache/admins.txt
+    ports:
+      - "127.0.0.1:${ADMIN_HOST_PORT:-8080}:8080"
+    volumes:
+      - ./families:/app/families:ro
+      - ./runtime_cache:/app/runtime_cache:ro
+
 volumes:
   postgres_data:
-
