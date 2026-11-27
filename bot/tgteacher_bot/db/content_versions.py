@@ -5,6 +5,7 @@ from pathlib import Path
 
 from tgteacher_bot.db.content_schema import STAGES, JSON_FIELDS, stage_key
 from tgteacher_bot.db.pool import get_pool
+from tgteacher_bot.db.catalog_lock import lock_catalog_writer
 from tgteacher_bot.db.media_repo import validate_media, record_media_links
 from tgteacher_bot.utils.content_validation import validate_family, family_identity, DuplicateFamilyError
 from tgteacher_bot.core.paths import families_dir
@@ -191,7 +192,7 @@ async def create_edit_draft(family_id, draft_id, expected_version):
     ident = uuid.UUID(draft_id)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
+            await lock_catalog_writer(conn)
             previous = await conn.fetchrow("SELECT * FROM family_edit_drafts WHERE id=$1", ident)
             if previous:
                 if previous["deleted_at"] is not None or previous["family_id"] != family_id or previous["base_version"] != expected_version:
@@ -367,7 +368,7 @@ async def publish_edit(draft_id, expected_revision):
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
+            await lock_catalog_writer(conn)
             row = await conn.fetchrow("SELECT * FROM family_edit_drafts WHERE id=$1 FOR UPDATE", uuid.UUID(draft_id))
             if not row or row["deleted_at"] is not None or row["revision"] != expected_revision:
                 raise VersionConflict("Draft missing or revision changed")
@@ -403,7 +404,7 @@ async def rollback_family(family_id, version, expected_version):
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
+            await lock_catalog_writer(conn)
             meta, old = await read_content(conn, family_id)
             if meta["content_version"] != expected_version:
                 raise VersionConflict("Family version changed")

@@ -1,5 +1,6 @@
 import asyncpg
 from tgteacher_bot.db.pool import get_pool
+from tgteacher_bot.db.catalog_lock import lock_catalog_writer
 import json
 from typing import List, Dict, Any, Tuple
 import functools
@@ -34,7 +35,7 @@ async def insert_family_on_connection(conn, family_data: dict, folder_name: str 
         raise RuntimeError("Family insertion requires a transaction")
     validate_family(family_data)
     # Serialize catalog inserts across all bot/MCP processes.
-    await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
+    await lock_catalog_writer(conn)
     identity = family_identity(family_data["name"], family_data.get("target"))
     existing = await conn.fetch("SELECT name, target FROM families")
     if any(family_identity(row["name"], row["target"]) == identity for row in existing):
@@ -285,7 +286,7 @@ async def set_family_archived_pg(family_id: int, archived: bool):
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute("SELECT pg_advisory_xact_lock(847231, 1)")
+            await lock_catalog_writer(conn)
             row = await conn.fetchrow("""
                 UPDATE families SET archived_at=CASE WHEN $2::boolean
                     THEN coalesce(archived_at, now()) ELSE NULL END

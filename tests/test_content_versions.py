@@ -251,3 +251,62 @@ class VersionTests(unittest.IsolatedAsyncioTestCase):
             await app.process_update(callback())
             answer.assert_awaited_once()
             self.assertEqual(seen, ["stage1_next"])
+
+
+    async def test_busy_writer_rollback_and_retry(self):
+        from tgteacher_bot.db import catalog_lock
+        draft = await self.draft()
+        draft["content"]["description"] = "Retry publication"
+        await versions.update_edit_draft(draft["draft_id"],1,draft["content"])
+        async with self.pool.acquire() as guard:
+            async with guard.transaction():
+                await guard.execute("SELECT pg_advisory_xact_lock_shared(847231,1)")
+                with patch.object(catalog_lock,"WRITER_WAIT_MS",100):
+                    with self.assertRaises(catalog_lock.CatalogBusy):
+                        await asyncio.wait_for(versions.publish_edit(draft["draft_id"],2),3)
+                self.assertEqual((await versions.get_current_content(self.fid))["content_version"],1)
+                self.assertIsNone((await versions.get_edit_draft(draft["draft_id"]))["published_version"])
+        self.assertEqual((await versions.publish_edit(draft["draft_id"],2))["content_version"],2)
+
+    async def test_busy_catalog_and_stale_reply_do_not_hold_guard(self):
+        from telegram import CallbackQuery, Update, User
+        from telegram.ext import Application
+        from tgteacher_bot.core import learning_session as session
+        app = Application.builder().application_class(session.LearningApplication).token("123:TEST").build()
+        uid,fid = 321,self.fid
+        app._user_data[uid]["current_family_idx"] = fid
+        def callback(version):
+            return Update(1,callback_query=CallbackQuery(id="query",from_user=User(uid,"Learner",False),
+                          chat_instance="chat",data=f"stage1_next~{fid}.{version}"))
+        entered,release = asyncio.Event(),asyncio.Event()
+        async def answer(*args,**kwargs):
+            entered.set()
+            await release.wait()
+        with patch.object(session,"get_pool",new=AsyncMock(return_value=self.pool)), patch.object(Application,"process_update",new=AsyncMock()) as dispatch, patch.object(CallbackQuery,"answer",new=AsyncMock(side_effect=answer)):
+            async with self.pool.acquire() as writer:
+                async with writer.transaction():
+                    await writer.execute("SELECT pg_advisory_xact_lock(847231,1)")
+                    task = asyncio.create_task(app.process_update(callback(1)))
+                    try:
+                        await asyncio.wait_for(entered.wait(),3)
+                        dispatch.assert_not_awaited()
+                    finally:
+                        release.set()
+                        await task
+            entered.clear()
+            release.clear()
+            task = asyncio.create_task(app.process_update(callback(99)))
+            try:
+                await asyncio.wait_for(entered.wait(),3)
+                async with self.pool.acquire() as writer:
+                    async with writer.transaction():
+                        self.assertTrue(await writer.fetchval("SELECT pg_try_advisory_xact_lock(847231,1)"))
+                dispatch.assert_not_awaited()
+            finally:
+                release.set()
+                await task
+            valid=callback(1)
+            await app.process_update(valid)
+            dispatch.assert_awaited_once()
+            self.assertEqual(valid.callback_query.data,f"stage1_next~{fid}.1")
+            self.assertIsNone(session.SESSION.get())

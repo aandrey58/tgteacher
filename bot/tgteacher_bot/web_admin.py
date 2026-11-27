@@ -21,6 +21,7 @@ from starlette.staticfiles import StaticFiles
 from tgteacher_bot.db import drafts_repo as drafts, content_versions as versions, families_repo as families
 from tgteacher_bot.db import tts_repo as tts, image_repo as images, media_repo as media, user_repo as users, srs_repo as srs
 from tgteacher_bot.db.pool import get_pool
+from tgteacher_bot.db.catalog_lock import CatalogBusy
 
 from tgteacher_bot.db import web_operations as ops, web_identity as identity, stars_repo as stars
 from tgteacher_bot.services.exports import web_transfer as transfer
@@ -493,6 +494,8 @@ def build_app(secret, origin, static_dir=None, initialize=True, allow_recovery=T
             return await (login(request) if request.url.path=="/api/login" else api(request))
         except PermissionError:
             return reply({"error":"Полномочия администратора изменились"},403)
+        except CatalogBusy as exc:
+            return reply({"error":str(exc)},409)
         except (ValueError,TypeError,KeyError):
             return reply({"error":"Некорректные данные или конфликт редакций. Проверьте поля и обновите страницу."},400)
         except Exception:
