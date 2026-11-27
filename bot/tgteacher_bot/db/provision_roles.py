@@ -123,8 +123,7 @@ async def main():
         await provision()
         print("Runtime roles and schema release prepared.")
     finally:
-        if pool._pool is not None:
-            await pool._pool.close()
+        await pool.close_pool()
 
 
 if __name__ == "__main__":

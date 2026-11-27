@@ -422,15 +422,13 @@ def main():
 
     @asynccontextmanager
     async def lifespan(application):
-        await init_db_pg()
+        from tgteacher_bot.db.pool import close_pool
         try:
+            await init_db_pg()
             async with previous(application):
                 yield
         finally:
-            from tgteacher_bot.db import pool
-            if pool._pool is not None:
-                await pool._pool.close()
-                pool._pool = None
+            await close_pool()
 
     app.router.lifespan_context = lifespan
     uvicorn.run(app, host=os.getenv("TGTEACHER_MCP_HOST", "127.0.0.1"),

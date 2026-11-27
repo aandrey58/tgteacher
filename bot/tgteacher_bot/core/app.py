@@ -303,6 +303,11 @@ async def _post_startup(application: Application):
         logger.exception("Failed to register jobs")
 
 
+async def _post_shutdown(application: Application):
+    from tgteacher_bot.db.pool import close_pool
+    await close_pool()
+
+
 def build_application() -> Application:
     token = os.getenv("BOT_TOKEN")
     if not token:
@@ -310,6 +315,7 @@ def build_application() -> Application:
     application = Application.builder().application_class(LearningApplication).token(token).build()
     _register_handlers(application)
     application.post_init = _post_startup
+    application.post_shutdown = _post_shutdown
     return application
 
 

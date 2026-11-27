@@ -37,7 +37,16 @@ def main():
     reconcile.add_argument("order_id")
     reconcile.add_argument("provider_id")
     reconcile.add_argument("--apply",action="store_true")
-    asyncio.run(run(p.parse_args()))
+    args = p.parse_args()
+
+    async def managed():
+        from tgteacher_bot.db.pool import close_pool
+        try:
+            await run(args)
+        finally:
+            await close_pool()
+
+    asyncio.run(managed())
 
 if __name__=="__main__":
     main()

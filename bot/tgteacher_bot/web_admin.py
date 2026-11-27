@@ -500,18 +500,23 @@ def build_app(secret, origin, static_dir=None, initialize=True, allow_recovery=T
 
     @asynccontextmanager
     async def lifespan(app):
-        if initialize:
-            await users.init_db_pg()
-            pool=await get_pool()
-            async with pool.acquire() as c:
-                async with c.transaction():
-                    await c.execute("SELECT pg_advisory_xact_lock(847231,8)")
-                    from tgteacher_bot.db.schema_access import verify_only
-                    if not verify_only():
-                        await init_web(c)
-                    if not allow_recovery and not await c.fetchval("SELECT 1 FROM web_admin_accounts WHERE role='owner' AND enabled LIMIT 1"):
-                        raise RuntimeError("Create an enabled owner before disabling recovery")
-        yield
+        from tgteacher_bot.db.pool import close_pool
+        try:
+            if initialize:
+                await users.init_db_pg()
+                pool=await get_pool()
+                async with pool.acquire() as c:
+                    async with c.transaction():
+                        await c.execute("SELECT pg_advisory_xact_lock(847231,8)")
+                        from tgteacher_bot.db.schema_access import verify_only
+                        if not verify_only():
+                            await init_web(c)
+                        if not allow_recovery and not await c.fetchval("SELECT 1 FROM web_admin_accounts WHERE role='owner' AND enabled LIMIT 1"):
+                            raise RuntimeError("Create an enabled owner before disabling recovery")
+            yield
+        finally:
+            if initialize:
+                await close_pool()
 
     routes=[Route("/api/login",safe,methods=["POST"]),Route("/api/{route}",safe,methods=["GET","POST"])]
     if static_dir:
