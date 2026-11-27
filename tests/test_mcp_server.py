@@ -41,12 +41,22 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_external_oauth_audience_expiry_and_scopes(self):
         resource = "https://teacher.example/mcp"
-        verifier = IntrospectionTokenVerifier("https://auth.example/introspect", "client", "secret", resource)
+        verifier = IntrospectionTokenVerifier("https://auth.example/introspect", "client", "secret", resource, "https://auth.example")
         valid = {"active": True, "aud": [resource], "exp": int(time.time()) + 600,
-                 "scope": READ + " " + EDIT, "client_id": "test"}
+                 "scope": READ + " " + EDIT, "client_id": "test", "iss": "https://auth.example", "sub": "account-123"}
         cases = [(valid, True), ({**valid, "aud": ["https://other.example/mcp"]}, False),
                  ({**valid, "exp": 1}, False), ({**valid, "active": False}, False),
-                 ({**valid, "scope": EDIT}, False)]
+                 ({**valid, "scope": EDIT}, False), ({**valid, "iss": "https://other.example"}, False),
+                 ({**valid, "iss": None}, False), ({**valid, "sub": ""}, False),
+                 ({**valid, "client_id": 111}, False), ({**valid, "exp": True}, False),
+                 ({**valid, "nbf": int(time.time())+600}, False),
+                 ({**valid, "token_type": "DPoP"}, False),
+                 ({**valid, "scope": READ + " " + PUBLISH}, False),
+                 ({**valid, "scope": READ + " learner:read"}, False),
+                 ({**valid, "scope": "learner:read learner:edit", "client_id": "learner:111"}, False),
+                 ({**valid, "client_id": "learner:111"}, True),
+                 ({**valid, "aud": resource}, True),
+                 ([], False)]
         for data, allowed in cases:
             with self.subTest(data=data):
                 response = httpx.Response(200, json=data, request=httpx.Request("POST", verifier.url))
@@ -56,6 +66,50 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
                 if token:
                     self.assertEqual(token.scopes, [READ, EDIT])
                     self.assertEqual(str(token.resource), resource)
+                    self.assertTrue(token.client_id.startswith("oauth:"))
+
+
+    async def test_external_oauth_transport_errors_and_reserved_token(self):
+        verifier = IntrospectionTokenVerifier("https://auth.example/introspect", "client", "secret",
+                                              "https://teacher.example/mcp", "https://auth.example")
+        with patch("httpx.AsyncClient.post", new=AsyncMock(side_effect=httpx.ConnectError("unavailable"))) as post:
+            self.assertIsNone(await verifier.verify_token("opaque-token"))
+            self.assertIsNone(await verifier.verify_token("tgtl_"+"a"*43))
+            self.assertIsNone(await verifier.verify_token("a"*8193))
+            self.assertIsNone(await verifier.verify_token("bad token"))
+            post.assert_awaited_once()
+        for url in ("http://auth.example", "https://user:pass@auth.example", "https://auth.example/#fragment"):
+            with self.assertRaises(ValueError):
+                IntrospectionTokenVerifier(url, "client", "secret", "https://teacher.example/mcp", "https://auth.example")
+        with self.assertRaises(ValueError):
+            build_server(verifier, "https://teacher.example/mcp", "https://other.example")
+
+
+class OAuthHTTPTests(unittest.TestCase):
+    def test_oauth_roles_never_gain_learner_access(self):
+        resource, issuer = "https://teacher.example/mcp", "https://auth.example"
+        verifier = IntrospectionTokenVerifier(issuer+"/introspect", "service", "secret", resource, issuer)
+        server = build_server(verifier, resource, issuer)
+        valid = {"active": True, "iss": issuer, "sub": "111", "client_id": "learner:111",
+                 "aud": resource, "exp": int(time.time())+600, "scope": READ}
+        headers = {"Accept":"application/json, text/event-stream", "MCP-Protocol-Version":"2025-06-18", "Authorization":"Bearer opaque-token"}
+        def response(data):
+            return httpx.Response(200, json=data, request=httpx.Request("POST", verifier.url))
+        def call(client, name, args=None):
+            return client.post("/mcp", headers=headers, json={"jsonrpc":"2.0","id":1,"method":"tools/call",
+                               "params":{"name":name,"arguments":args or {}}})
+        with TestClient(server.streamable_http_app(), base_url="https://teacher.example") as client:
+            from tgteacher_bot.db import srs_repo
+            with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response(valid))), patch.object(srs_repo, "learning_progress", new=AsyncMock()) as progress:
+                self.assertFalse(call(client,"get_content_format").json()["result"].get("isError",False))
+                self.assertTrue(call(client,"get_learning_progress").json()["result"]["isError"])
+                self.assertTrue(call(client,"get_learner_profile").json()["result"]["isError"])
+                self.assertTrue(call(client,"publish_draft",{"draft_id":str(uuid.uuid4()),"expected_revision":1,"confirm":True}).json()["result"]["isError"])
+                progress.assert_not_awaited()
+            with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response({**valid,"scope":READ+" learner:read"}))):
+                self.assertEqual(call(client,"get_learning_progress").status_code,401)
+            with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=response({**valid,"iss":"https://other.example"}))):
+                self.assertEqual(call(client,"get_content_format").status_code,401)
 
 
 class HTTPTests(unittest.TestCase):

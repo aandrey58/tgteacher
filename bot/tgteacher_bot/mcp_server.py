@@ -23,6 +23,9 @@ def _page(limit, offset):
 
 
 def build_server(verifier, resource="http://127.0.0.1:8000/mcp", issuer="http://127.0.0.1:8000"):
+    from tgteacher_bot.mcp_auth import IntrospectionTokenVerifier
+    if isinstance(verifier, IntrospectionTokenVerifier) and (verifier.resource != resource or verifier.issuer != issuer):
+        raise ValueError("OAuth verifier and advertised resource/issuer must match")
     parsed = urlsplit(resource)
     if parsed.path != "/mcp" or parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("Resource URL must end in /mcp")
